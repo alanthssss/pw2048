@@ -410,6 +410,7 @@ footer {{
     box-shadow: 0 2px 12px rgba(0,0,0,.08);
     margin-bottom: 48px;
     overflow: hidden;
+    scroll-margin-top: 56px;  /* account for sticky nav */
 }}
 .board-header {{
     background: {header_bg};
