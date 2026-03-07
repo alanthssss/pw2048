@@ -1,13 +1,15 @@
-"""Tests for the Random, Greedy, and Heuristic algorithms and game logic."""
+"""Tests for the Random, Greedy, Heuristic, Expectimax, and MCTS algorithms and game logic."""
 
 from __future__ import annotations
 
 import pathlib
+import random
 import pytest
 from playwright.sync_api import sync_playwright
 
 from main import build_output_dir
-from src.algorithms.greedy_algo import GreedyAlgorithm, simulate_move, _slide_row_left
+from src.algorithms.expectimax_algo import ExpectimaxAlgorithm, _expectimax, _get_empty_cells
+from src.algorithms.greedy_algo import GreedyAlgorithm, simulate_move, _slide_row_left, _boards_equal
 from src.algorithms.heuristic_algo import (
     HeuristicAlgorithm,
     _corner_score,
@@ -16,6 +18,7 @@ from src.algorithms.heuristic_algo import (
     _monotonicity_score,
     _score_board,
 )
+from src.algorithms.mcts_algo import MCTSAlgorithm, _MCTSNode, _spawn_tile
 from src.algorithms.random_algo import RandomAlgorithm
 from src.game import Game2048, DIRECTIONS
 
@@ -403,6 +406,241 @@ class TestHeuristicAlgorithm:
     def test_full_game_runs_to_completion(self, game):
         """Play a full game with the heuristic algorithm and verify post-game state."""
         algo = HeuristicAlgorithm(seed=0)
+        game.new_game()
+        moves = 0
+        while not game.is_game_over():
+            board = game.get_board()
+            direction = algo.choose_move(board)
+            game.make_move(direction)
+            moves += 1
+            assert moves < 10_000, "Game did not end within 10 000 moves"
+
+        assert game.get_score() >= 0
+        assert game.get_max_tile() >= 2
+
+
+# ---------------------------------------------------------------------------
+# Expectimax helper functions
+# ---------------------------------------------------------------------------
+
+
+class TestGetEmptyCells:
+    def test_full_board_returns_empty_list(self):
+        board = [[2] * 4 for _ in range(4)]
+        assert _get_empty_cells(board) == []
+
+    def test_empty_board_returns_all_cells(self):
+        board = [[0] * 4 for _ in range(4)]
+        assert len(_get_empty_cells(board)) == 16
+
+    def test_partial_board(self):
+        board = [[2, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]]
+        assert len(_get_empty_cells(board)) == 15
+        assert (0, 0) not in _get_empty_cells(board)
+
+
+class TestExpectimaxSearch:
+    def test_depth_zero_returns_heuristic_score(self):
+        board = [[2, 4, 2, 4], [4, 2, 4, 2], [2, 4, 2, 4], [4, 2, 4, 2]]
+        val = _expectimax(board, 0, True)
+        assert val == _score_board(board)
+
+    def test_player_node_returns_finite_value(self):
+        board = [[2, 0, 0, 0], [4, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]]
+        val = _expectimax(board, 2, True)
+        assert isinstance(val, float)
+
+    def test_chance_node_returns_finite_value(self):
+        board = [[2, 0, 0, 0], [4, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]]
+        val = _expectimax(board, 2, False)
+        assert isinstance(val, float)
+
+    def test_terminal_board_returns_heuristic_score(self):
+        # Checkerboard: no valid moves → should return the heuristic score.
+        board = [
+            [2, 4, 2, 4],
+            [4, 2, 4, 2],
+            [2, 4, 2, 4],
+            [4, 2, 4, 2],
+        ]
+        val = _expectimax(board, 4, True)
+        assert val == _score_board(board)
+
+
+# ---------------------------------------------------------------------------
+# ExpectimaxAlgorithm
+# ---------------------------------------------------------------------------
+
+
+class TestExpectimaxAlgorithm:
+    def test_algorithm_name(self):
+        assert ExpectimaxAlgorithm.name == "Expectimax"
+
+    def test_choose_move_returns_valid_direction(self):
+        algo = ExpectimaxAlgorithm()
+        board = [[2, 0, 0, 0], [4, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]]
+        move = algo.choose_move(board)
+        assert move in DIRECTIONS
+
+    def test_falls_back_on_fully_blocked_board(self):
+        algo = ExpectimaxAlgorithm(seed=0)
+        board = [
+            [2, 4, 2, 4],
+            [4, 2, 4, 2],
+            [2, 4, 2, 4],
+            [4, 2, 4, 2],
+        ]
+        move = algo.choose_move(board)
+        assert move in DIRECTIONS
+
+    def test_seeded_rng_fallback_is_deterministic(self):
+        board = [
+            [2, 4, 2, 4],
+            [4, 2, 4, 2],
+            [2, 4, 2, 4],
+            [4, 2, 4, 2],
+        ]
+        move1 = ExpectimaxAlgorithm(seed=7).choose_move(board)
+        move2 = ExpectimaxAlgorithm(seed=7).choose_move(board)
+        assert move1 == move2
+
+    def test_prefers_corner_move(self):
+        """Moving left should place the max tile in the top-left corner."""
+        board = [
+            [0, 0, 1024, 2],
+            [0, 0, 0, 0],
+            [0, 0, 0, 0],
+            [0, 0, 0, 0],
+        ]
+        algo = ExpectimaxAlgorithm(depth=2)
+        move = algo.choose_move(board)
+        assert move == "left"
+
+    def test_full_game_runs_to_completion(self, game):
+        """Play a full game with the expectimax algorithm."""
+        algo = ExpectimaxAlgorithm(depth=2, seed=0)
+        game.new_game()
+        moves = 0
+        while not game.is_game_over():
+            board = game.get_board()
+            direction = algo.choose_move(board)
+            game.make_move(direction)
+            moves += 1
+            assert moves < 10_000, "Game did not end within 10 000 moves"
+
+        assert game.get_score() >= 0
+        assert game.get_max_tile() >= 2
+
+
+# ---------------------------------------------------------------------------
+# MCTS helpers
+# ---------------------------------------------------------------------------
+
+
+class TestSpawnTile:
+    def test_adds_a_tile_to_empty_cell(self):
+        board = [[2, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]]
+        rng = random.Random(0)
+        new_board = _spawn_tile(board, rng)
+        # Original board is unchanged.
+        assert board[0] == [2, 0, 0, 0]
+        # Exactly one more non-zero tile.
+        orig_nonzero = sum(board[r][c] != 0 for r in range(4) for c in range(4))
+        new_nonzero = sum(new_board[r][c] != 0 for r in range(4) for c in range(4))
+        assert new_nonzero == orig_nonzero + 1
+
+    def test_spawned_tile_is_2_or_4(self):
+        board = [[0] * 4 for _ in range(4)]
+        rng = random.Random(42)
+        for _ in range(20):
+            nb = _spawn_tile(board, rng)
+            spawned = {nb[r][c] for r in range(4) for c in range(4)} - {0}
+            assert spawned <= {2, 4}
+
+    def test_full_board_unchanged(self):
+        board = [[2] * 4 for _ in range(4)]
+        rng = random.Random(0)
+        new_board = _spawn_tile(board, rng)
+        assert new_board == board
+
+
+class TestMCTSNode:
+    def _simple_board(self):
+        return [[2, 0, 0, 0], [4, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]]
+
+    def test_untried_moves_excludes_invalid_directions(self):
+        node = _MCTSNode(self._simple_board())
+        untried = node.untried_moves()
+        # All returned moves must be valid (change the board).
+        for d in untried:
+            new_b, _ = simulate_move(node.board, d)
+            assert not _boards_equal(node.board, new_b)
+
+    def test_is_terminal_false_for_open_board(self):
+        node = _MCTSNode(self._simple_board())
+        assert not node.is_terminal()
+
+    def test_is_terminal_true_for_blocked_board(self):
+        board = [
+            [2, 4, 2, 4],
+            [4, 2, 4, 2],
+            [2, 4, 2, 4],
+            [4, 2, 4, 2],
+        ]
+        node = _MCTSNode(board)
+        assert node.is_terminal()
+
+    def test_ucb1_infinite_for_unvisited(self):
+        parent = _MCTSNode([[0] * 4 for _ in range(4)])
+        parent.visits = 1
+        child = _MCTSNode([[0] * 4 for _ in range(4)], parent=parent, move="left")
+        assert child.ucb1(1.0) == float("inf")
+
+    def test_most_visited_child_returns_highest_visits(self):
+        board = [[2, 0, 0, 0], [4, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]]
+        root = _MCTSNode(board)
+        for move, visits in [("left", 5), ("right", 10), ("up", 1)]:
+            child = _MCTSNode(board, parent=root, move=move)
+            child.visits = visits
+            root.children[move] = child
+        assert root.most_visited_child().move == "right"
+
+
+# ---------------------------------------------------------------------------
+# MCTSAlgorithm
+# ---------------------------------------------------------------------------
+
+
+class TestMCTSAlgorithm:
+    def test_algorithm_name(self):
+        assert MCTSAlgorithm.name == "MCTS"
+
+    def test_choose_move_returns_valid_direction(self):
+        algo = MCTSAlgorithm(n_iterations=20, seed=0)
+        board = [[2, 0, 0, 0], [4, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]]
+        move = algo.choose_move(board)
+        assert move in DIRECTIONS
+
+    def test_falls_back_on_fully_blocked_board(self):
+        algo = MCTSAlgorithm(n_iterations=20, seed=0)
+        board = [
+            [2, 4, 2, 4],
+            [4, 2, 4, 2],
+            [2, 4, 2, 4],
+            [4, 2, 4, 2],
+        ]
+        move = algo.choose_move(board)
+        assert move in DIRECTIONS
+
+    def test_seeded_instance_is_deterministic(self):
+        board = [[2, 0, 0, 0], [4, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]]
+        move1 = MCTSAlgorithm(n_iterations=30, seed=42).choose_move(board)
+        move2 = MCTSAlgorithm(n_iterations=30, seed=42).choose_move(board)
+        assert move1 == move2
+
+    def test_full_game_runs_to_completion(self, game):
+        """Play a full game with the MCTS algorithm."""
+        algo = MCTSAlgorithm(n_iterations=20, sim_depth=10, seed=0)
         game.new_game()
         moves = 0
         while not game.is_game_over():
