@@ -282,3 +282,19 @@ class TestRunTuiArgvParseable:
         args = parse_args(argv)
         assert args.mode == "dev"
         assert args.games == 100
+
+    def test_expectimax_argv_is_valid(self):
+        from main import parse_args
+
+        with _patch_tui(_mock_answers(algorithm="expectimax")):
+            argv = run_tui()
+        args = parse_args(argv)
+        assert args.algorithm == "expectimax"
+
+    def test_mcts_argv_is_valid(self):
+        from main import parse_args
+
+        with _patch_tui(_mock_answers(algorithm="mcts")):
+            argv = run_tui()
+        args = parse_args(argv)
+        assert args.algorithm == "mcts"

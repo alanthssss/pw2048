@@ -10,6 +10,8 @@ Usage
                    [--keep N] [--report] [--parallel N]
                    [--s3-bucket BUCKET] [--s3-prefix PREFIX] [--s3-public]
 
+    Available algorithms: random, greedy, heuristic, expectimax, mcts
+
     Results are saved under a per-run subdirectory, e.g.::
 
         results/Random/run_20260307_120000/results.csv
