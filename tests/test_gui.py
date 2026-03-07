@@ -174,6 +174,18 @@ class TestBuildArgvParseable:
         assert args.mode == "benchmark"
         assert args.games == 500
 
+    def test_expectimax_argv_valid(self):
+        from main import parse_args
+
+        args = parse_args(_argv(algorithm="expectimax"))
+        assert args.algorithm == "expectimax"
+
+    def test_mcts_argv_valid(self):
+        from main import parse_args
+
+        args = parse_args(_argv(algorithm="mcts"))
+        assert args.algorithm == "mcts"
+
 
 # ---------------------------------------------------------------------------
 # Tests: run_gui() when tkinter is absent

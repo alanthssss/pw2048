@@ -10,6 +10,8 @@ Usage
                    [--keep N] [--report] [--parallel N]
                    [--s3-bucket BUCKET] [--s3-prefix PREFIX] [--s3-public]
 
+    Available algorithms: random, greedy, heuristic, expectimax, mcts
+
     Results are saved under a per-run subdirectory, e.g.::
 
         results/Random/run_20260307_120000/results.csv
@@ -76,8 +78,10 @@ from pathlib import Path
 
 import argcomplete
 
+from src.algorithms.expectimax_algo import ExpectimaxAlgorithm
 from src.algorithms.greedy_algo import GreedyAlgorithm
 from src.algorithms.heuristic_algo import HeuristicAlgorithm
+from src.algorithms.mcts_algo import MCTSAlgorithm
 from src.algorithms.random_algo import RandomAlgorithm
 from src.runner import run_games
 from src.visualize import plot_results
@@ -86,6 +90,8 @@ ALGORITHMS = {
     "random": RandomAlgorithm,
     "greedy": GreedyAlgorithm,
     "heuristic": HeuristicAlgorithm,
+    "expectimax": ExpectimaxAlgorithm,
+    "mcts": MCTSAlgorithm,
 }
 
 _DEFAULT_KEEP = 10

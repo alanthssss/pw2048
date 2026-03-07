@@ -70,7 +70,7 @@ main { max-width: 1100px; margin: 0 auto; padding: 32px 16px 64px; }
     border-radius: 12px;
     box-shadow: 0 2px 12px rgba(0,0,0,.08);
     margin-bottom: 48px;
-    overflow: hidden;
+    overflow: clip;
     scroll-margin-top: 56px;  /* account for sticky nav */
 }
 .algo-section-header {
@@ -149,7 +149,7 @@ main { max-width: 1100px; margin: 0 auto; padding: 32px 16px 64px; }
     border: 1px solid $details_border;
     border-radius: 8px;
     margin-bottom: 8px;
-    overflow: hidden;
+    overflow: clip;
 }
 .run-item[open] {
     border-color: $card_accent;
@@ -235,6 +235,40 @@ thead th {
 }
 tbody tr:nth-child(even) { background: $table_even; }
 tbody td { padding: 8px 13px; }
+
+/* ── Main leaderboard: fixed layout, no horizontal scroll ───────────── */
+.main-leaderboard table {
+    width: 100%;
+    table-layout: fixed;
+    border-collapse: collapse;
+    font-size: 0.87rem;
+}
+.main-leaderboard thead th {
+    background: $header_bg;
+    color: $header_fg;
+    font-weight: 600;
+    white-space: nowrap;
+    padding: 9px 10px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    text-align: left;
+}
+.main-leaderboard tbody tr:nth-child(even) { background: $table_even; }
+.main-leaderboard tbody td {
+    padding: 8px 10px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+/* Rank column */
+.main-leaderboard th:nth-child(1),
+.main-leaderboard td:nth-child(1) { width: 40px; }
+/* Algorithm column — widest */
+.main-leaderboard th:nth-child(2),
+.main-leaderboard td:nth-child(2) { width: 220px; }
+/* Numeric columns — right-aligned */
+.main-leaderboard th.num,
+.main-leaderboard td.num { text-align: right; }
 .badge {
     display: inline-block;
     padding: 2px 8px;
@@ -261,7 +295,7 @@ tbody td { padding: 8px 13px; }
     border-radius: 12px;
     box-shadow: 0 2px 12px rgba(0,0,0,.08);
     margin-bottom: 48px;
-    overflow: hidden;
+    overflow: clip;
 }
 .cmp-header {
     background: $header_bg;
@@ -365,7 +399,7 @@ footer {
     border-radius: 12px;
     box-shadow: 0 2px 12px rgba(0,0,0,.08);
     margin-bottom: 48px;
-    overflow: hidden;
+    overflow: clip;
     scroll-margin-top: 56px;  /* account for sticky nav */
 }
 .board-header {
@@ -394,6 +428,20 @@ footer {
 .stage-release   { background: $win_badge; color: white; }
 .stage-dev       { background: $nav_bg; color: $nav_fg; }
 .stage-custom    { background: $card_bg; color: $text_dark; }
+
+/* ── Algorithm type badge ────────────────────────────────────────── */
+.algo-type-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 0.72rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .05em;
+    white-space: nowrap;
+}
+.algo-type-baseline { background: #83a598; color: white; }
+.algo-type-search   { background: #d3869b; color: white; }
 
 /* ── Rank cells ──────────────────────────────────────────────────── */
 .rank-1 { font-weight: 700; color: $card_accent; }
