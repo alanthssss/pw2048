@@ -426,10 +426,10 @@ def main(argv: list[str] | None = None) -> None:
         )
         print(f"Metadata saved → {meta_path}")
 
-    # ------------------------------------------------------------------
-    # Prune old local results
-    # ------------------------------------------------------------------
-    prune_local_results(algo_dir, keep_n=args.keep)
+        # ------------------------------------------------------------------
+        # Prune old local results after each run to keep disk usage bounded
+        # ------------------------------------------------------------------
+        prune_local_results(algo_dir, keep_n=args.keep)
 
     # ------------------------------------------------------------------
     # Generate HTML report

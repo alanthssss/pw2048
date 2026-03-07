@@ -106,6 +106,38 @@ class TestPruneLocalResults:
         # 2 old run dirs × (2 files + 1 dir entry) = 6 items
         assert len(deleted) == 6
 
+    def test_keep_default_ten_with_eleven_results(self, tmp_path):
+        """--keep 10 (default) with 11 existing results must keep 10, delete 1.
+
+        This is the canonical regression test for the reported bug:
+        'when 11 results remove the oldest and keep latest 10 instead of only 1'.
+        """
+        for i in range(1, 12):  # 11 runs
+            self._make_run(tmp_path, f"202603{i:02d}_120000")
+        deleted = prune_local_results(tmp_path, keep_n=10)
+        remaining = sorted(d for d in tmp_path.iterdir() if d.is_dir())
+        # Must keep exactly 10 (newest), not 1
+        assert len(remaining) == 10
+        # Oldest (run_20260301) must be gone
+        assert not (tmp_path / "run_20260301_120000").exists()
+        # All 10 newest must remain
+        for i in range(2, 12):
+            assert (tmp_path / f"run_202603{i:02d}_120000").exists()
+
+    def test_keep_ten_with_twenty_results(self, tmp_path):
+        """--keep 10 with 20 existing results must keep the newest 10."""
+        for i in range(1, 21):  # 20 runs
+            self._make_run(tmp_path, f"202603{i:02d}_120000")
+        deleted = prune_local_results(tmp_path, keep_n=10)
+        remaining = sorted(d for d in tmp_path.iterdir() if d.is_dir())
+        assert len(remaining) == 10
+        # Oldest 10 must be gone
+        for i in range(1, 11):
+            assert not (tmp_path / f"run_202603{i:02d}_120000").exists()
+        # Newest 10 must remain
+        for i in range(11, 21):
+            assert (tmp_path / f"run_202603{i:02d}_120000").exists()
+
 
 # ---------------------------------------------------------------------------
 # generate_html_report  (dashboard tests)
