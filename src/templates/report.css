@@ -84,6 +84,12 @@ main { max-width: 1100px; margin: 0 auto; padding: 32px 16px 64px; }
     gap: 10px;
 }
 .algo-section-body { padding: 24px; }
+.algo-section-runs-label {
+    font-size: 0.75rem;
+    font-weight: 400;
+    opacity: .8;
+    margin-left: 8px;
+}
 
 /* ── Aggregate stats cards ─────────────────────────────────────────── */
 .stats-grid {
@@ -158,6 +164,7 @@ main { max-width: 1100px; margin: 0 auto; padding: 32px 16px 64px; }
     align-items: center;
     flex-wrap: wrap;
     gap: 8px;
+    -webkit-user-select: none;
     user-select: none;
 }
 .run-item[open] > .run-summary {
@@ -439,6 +446,13 @@ footer {
 .global-chart-card img {
     max-width: 100%;
     border-radius: 4px;
+}
+
+/* ── No results placeholder ─────────────────────────────────────────── */
+.no-results-msg {
+    text-align: center;
+    padding: 40px;
+    opacity: .5;
 }
 
 /* ── Responsive ────────────────────────────────────────────────────── */

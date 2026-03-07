@@ -995,7 +995,7 @@ def _algo_section(algo_name: str, algo_dir: Path) -> str:
 <section class="algo-section" id="{section_id}">
   <div class="algo-section-header">
     🤖 {html.escape(algo_name)}
-    <span style="font-size:0.75rem;font-weight:400;opacity:.8;margin-left:8px">({runs_label})</span>
+    <span class="algo-section-runs-label">({runs_label})</span>
   </div>
   <div class="algo-section-body">
     {stats_html}
@@ -1181,7 +1181,7 @@ def generate_html_report(
 
     if not sections_html.strip():
         sections_html = (
-            '<p style="text-align:center;padding:40px;opacity:.5">'
+            '<p class="no-results-msg">'
             "No results found yet.  Run <code>python main.py</code> to generate some."
             "</p>"
         )
