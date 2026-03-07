@@ -3,10 +3,104 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
+import numpy as np
 import pandas as pd
+
+
+def compute_run_metrics(df: pd.DataFrame) -> dict[str, Any]:
+    """Compute run-level summary statistics from game results.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        DataFrame returned by :func:`src.runner.run_games`.
+
+    Returns
+    -------
+    dict
+        Dictionary with keys:
+        ``avg_score``, ``median_score``, ``p90_score``, ``max_score``,
+        ``avg_moves``, ``avg_duration``, ``avg_best_tile``,
+        ``win_rate``, ``games_per_second``.
+    """
+    total_duration = df["duration"].sum()
+    n = len(df)
+    return {
+        "avg_score":      float(df["score"].mean()),
+        "median_score":   float(df["score"].median()),
+        "p90_score":      float(df["score"].quantile(0.9)),
+        "max_score":      int(df["score"].max()),
+        "avg_moves":      float(df["moves"].mean()),
+        "avg_duration":   float(df["duration"].mean()),
+        "avg_best_tile":  float(df["best_tile"].mean()),
+        "win_rate":       float(df["won"].mean() * 100),
+        "games_per_second": float(n / total_duration) if total_duration > 0 else 0.0,
+    }
+
+
+def score_distribution(df: pd.DataFrame, bins: int = 20) -> dict[str, int]:
+    """Return a binned score distribution as ``{bin_label: count}``.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        DataFrame returned by :func:`src.runner.run_games`.
+    bins : int
+        Number of histogram bins.
+
+    Returns
+    -------
+    dict[str, int]
+        Keys are bin range strings (e.g. ``"1000-2000"``), values are game counts.
+    """
+    counts, edges = np.histogram(df["score"], bins=bins)
+    return {
+        f"{int(edges[i])}-{int(edges[i + 1])}": int(counts[i])
+        for i in range(len(counts))
+    }
+
+
+def moves_distribution(df: pd.DataFrame, bins: int = 20) -> dict[str, int]:
+    """Return a binned move-count distribution as ``{bin_label: count}``.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        DataFrame returned by :func:`src.runner.run_games`.
+    bins : int
+        Number of histogram bins.
+
+    Returns
+    -------
+    dict[str, int]
+        Keys are bin range strings (e.g. ``"100-200"``), values are game counts.
+    """
+    counts, edges = np.histogram(df["moves"], bins=bins)
+    return {
+        f"{int(edges[i])}-{int(edges[i + 1])}": int(counts[i])
+        for i in range(len(counts))
+    }
+
+
+def tile_distribution(df: pd.DataFrame) -> dict[int, int]:
+    """Return the frequency of each best-tile value.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        DataFrame returned by :func:`src.runner.run_games`.
+
+    Returns
+    -------
+    dict[int, int]
+        Maps tile value → number of games ending with that tile as the best tile.
+        E.g. ``{64: 120, 128: 300, 256: 180}``.
+    """
+    return {int(k): int(v) for k, v in df["best_tile"].value_counts().sort_index().items()}
 
 
 def plot_results(
@@ -50,7 +144,7 @@ def plot_results(
 
     # 2. Max tile frequency
     ax = axes[0, 1]
-    tile_counts = df["max_tile"].value_counts().sort_index()
+    tile_counts = df["best_tile"].value_counts().sort_index()
     bars = ax.bar([str(t) for t in tile_counts.index], tile_counts.values, color="#edcf72", edgecolor="white")
     ax.set_title("Highest Tile Achieved")
     ax.set_xlabel("Tile Value")
@@ -61,9 +155,9 @@ def plot_results(
 
     # 3. Move count distribution
     ax = axes[1, 0]
-    ax.hist(df["move_count"], bins=20, color="#8f7a66", edgecolor="white")
-    ax.axvline(df["move_count"].mean(), color="#f9f6f2", linestyle="--",
-               label=f"mean = {df['move_count'].mean():,.0f}")
+    ax.hist(df["moves"], bins=20, color="#8f7a66", edgecolor="white")
+    ax.axvline(df["moves"].mean(), color="#f9f6f2", linestyle="--",
+               label=f"mean = {df['moves'].mean():,.0f}")
     ax.set_title("Move Count Distribution")
     ax.set_xlabel("Moves")
     ax.set_ylabel("Games")
@@ -94,12 +188,15 @@ def plot_results(
 
 def _print_summary(df: pd.DataFrame, algo: str) -> None:
     """Print a concise text summary to stdout."""
-    print("\n" + "=" * 50)
+    metrics = compute_run_metrics(df)
+    print("\n" + "=" * 60)
     print(f"  Summary — {algo} Algorithm  (n={len(df)} games)")
-    print("=" * 50)
-    print(f"  Score   :  min={df['score'].min():>6,}  mean={df['score'].mean():>8,.0f}  max={df['score'].max():>6,}")
-    print(f"  Max tile:  min={df['max_tile'].min():>6}  mean={df['max_tile'].mean():>8.1f}  max={df['max_tile'].max():>6}")
-    print(f"  Moves   :  min={df['move_count'].min():>6}  mean={df['move_count'].mean():>8.1f}  max={df['move_count'].max():>6}")
-    win_rate = df["won"].mean() * 100
-    print(f"  Win rate: {win_rate:.1f}%")
-    print("=" * 50 + "\n")
+    print("=" * 60)
+    print(f"  Score   :  avg={metrics['avg_score']:>8,.0f}  median={metrics['median_score']:>8,.0f}"
+          f"  p90={metrics['p90_score']:>8,.0f}  max={metrics['max_score']:>6,}")
+    print(f"  Best tile:  avg={metrics['avg_best_tile']:>6.1f}  max={df['best_tile'].max():>6}")
+    print(f"  Moves   :  avg={metrics['avg_moves']:>8.1f}  max={df['moves'].max():>6}")
+    print(f"  Duration:  avg={metrics['avg_duration']:>6.3f}s")
+    print(f"  Win rate:  {metrics['win_rate']:.1f}%")
+    print(f"  Throughput: {metrics['games_per_second']:.2f} games/sec")
+    print("=" * 60 + "\n")

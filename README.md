@@ -4,8 +4,18 @@ Automate the [2048 game](https://play2048.co/) using [Playwright](https://playwr
 
 ## Roadmap
 
-- [x] **Simple Random** — pick a random direction each turn (baseline)
-- [ ] More algorithms coming soon…
+### Baselines
+- [x] **Random** — pick a random direction each turn
+- [x] **Greedy** — pick the move that maximises immediate score gain
+- [ ] **Heuristic** — hand-crafted heuristics (e.g. corner strategy, monotonicity)
+
+### Search Algorithms
+- [ ] **Expectimax** — game-tree search with chance nodes for tile spawns
+- [ ] **MCTS** — Monte Carlo Tree Search
+
+### Learning Algorithms
+- [ ] **DQN** — Deep Q-Network (reinforcement learning)
+- [ ] **PPO** — Proximal Policy Optimization (reinforcement learning)
 
 ## Project structure
 

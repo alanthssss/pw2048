@@ -1,4 +1,4 @@
-"""Tests for the Random algorithm and game logic."""
+"""Tests for the Random and Greedy algorithms and game logic."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ import pytest
 from playwright.sync_api import sync_playwright
 
 from main import build_output_dir
+from src.algorithms.greedy_algo import GreedyAlgorithm, simulate_move, _slide_row_left
 from src.algorithms.random_algo import RandomAlgorithm
 from src.game import Game2048, DIRECTIONS
 
@@ -117,3 +118,160 @@ class TestGame2048:
         assert game.get_max_tile() >= 2
         # move_count tracks effective (board-changing) moves; total attempts may be higher
         assert game.get_move_count() <= moves
+
+
+# ---------------------------------------------------------------------------
+# _slide_row_left helper
+# ---------------------------------------------------------------------------
+
+
+class TestSlideRowLeft:
+    def test_merges_equal_adjacent_tiles(self):
+        row, score = _slide_row_left([2, 2, 0, 0])
+        assert row == [4, 0, 0, 0]
+        assert score == 4
+
+    def test_slides_tiles_to_left(self):
+        row, score = _slide_row_left([0, 0, 2, 4])
+        assert row == [2, 4, 0, 0]
+        assert score == 0
+
+    def test_no_merge_different_tiles(self):
+        row, score = _slide_row_left([2, 4, 2, 4])
+        assert row == [2, 4, 2, 4]
+        assert score == 0
+
+    def test_double_merge(self):
+        row, score = _slide_row_left([2, 2, 4, 4])
+        assert row == [4, 8, 0, 0]
+        assert score == 12
+
+    def test_empty_row(self):
+        row, score = _slide_row_left([0, 0, 0, 0])
+        assert row == [0, 0, 0, 0]
+        assert score == 0
+
+    def test_single_merge_does_not_chain(self):
+        # [2,2,2,0] → [4,2,0,0]: first pair merges, leftover 2 stays
+        row, score = _slide_row_left([2, 2, 2, 0])
+        assert row == [4, 2, 0, 0]
+        assert score == 4
+
+
+# ---------------------------------------------------------------------------
+# simulate_move helper
+# ---------------------------------------------------------------------------
+
+
+class TestSimulateMove:
+    def test_left_move(self):
+        board = [
+            [0, 2, 0, 2],
+            [0, 0, 0, 0],
+            [0, 0, 0, 0],
+            [0, 0, 0, 0],
+        ]
+        new_board, score = simulate_move(board, "left")
+        assert new_board[0] == [4, 0, 0, 0]
+        assert score == 4
+
+    def test_right_move(self):
+        board = [
+            [2, 0, 2, 0],
+            [0, 0, 0, 0],
+            [0, 0, 0, 0],
+            [0, 0, 0, 0],
+        ]
+        new_board, score = simulate_move(board, "right")
+        assert new_board[0] == [0, 0, 0, 4]
+        assert score == 4
+
+    def test_up_move(self):
+        board = [
+            [0, 0, 0, 0],
+            [0, 0, 0, 0],
+            [2, 0, 0, 0],
+            [2, 0, 0, 0],
+        ]
+        new_board, score = simulate_move(board, "up")
+        assert new_board[0][0] == 4
+        assert score == 4
+
+    def test_down_move(self):
+        board = [
+            [2, 0, 0, 0],
+            [2, 0, 0, 0],
+            [0, 0, 0, 0],
+            [0, 0, 0, 0],
+        ]
+        new_board, score = simulate_move(board, "down")
+        assert new_board[3][0] == 4
+        assert score == 4
+
+    def test_does_not_mutate_original_board(self):
+        board = [[2, 2, 0, 0]] + [[0] * 4 for _ in range(3)]
+        original = [row[:] for row in board]
+        simulate_move(board, "left")
+        assert board == original
+
+
+# ---------------------------------------------------------------------------
+# GreedyAlgorithm
+# ---------------------------------------------------------------------------
+
+
+class TestGreedyAlgorithm:
+    def test_choose_move_returns_valid_direction(self):
+        algo = GreedyAlgorithm()
+        board = [[2, 0, 0, 0], [4, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]]
+        move = algo.choose_move(board)
+        assert move in DIRECTIONS
+
+    def test_algorithm_name(self):
+        assert GreedyAlgorithm.name == "Greedy"
+
+    def test_prefers_merging_move(self):
+        """Greedy should pick the direction that produces the highest merge score."""
+        # Left produces a single merge (2+2=4, score 4); right produces nothing
+        board = [
+            [0, 0, 2, 2],
+            [0, 0, 0, 0],
+            [0, 0, 0, 0],
+            [0, 0, 0, 0],
+        ]
+        algo = GreedyAlgorithm()
+        move = algo.choose_move(board)
+        assert move == "left"
+
+    def test_falls_back_when_no_valid_move_changes_board(self):
+        """On a fully blocked board the fallback to a random direction works without error.
+
+        The checkerboard layout below has no merges possible in any direction,
+        so all simulated moves produce a board identical to the input.
+        ``choose_move`` should detect that no direction changes the board and
+        return a direction via its random fallback.
+        """
+        algo = GreedyAlgorithm(seed=0)
+        board = [
+            [2, 4, 2, 4],
+            [4, 2, 4, 2],
+            [2, 4, 2, 4],
+            [4, 2, 4, 2],
+        ]
+        move = algo.choose_move(board)
+        assert move in DIRECTIONS
+
+    def test_full_game_runs_to_completion(self, game):
+        """Play a full game with the greedy algorithm and verify post-game state."""
+        algo = GreedyAlgorithm(seed=0)
+        game.new_game()
+        moves = 0
+        while not game.is_game_over():
+            board = game.get_board()
+            direction = algo.choose_move(board)
+            game.make_move(direction)
+            moves += 1
+            assert moves < 10_000, "Game did not end within 10 000 moves"
+
+        assert game.get_score() >= 0
+        assert game.get_max_tile() >= 2
