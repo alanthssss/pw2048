@@ -1,3 +1,4 @@
+# PYTHON_ARGCOMPLETE_OK
 """
 pw2048 – Play 2048 with different algorithms and visualise the results.
 
@@ -62,6 +63,8 @@ import shutil
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
+
+import argcomplete
 
 from src.algorithms.greedy_algo import GreedyAlgorithm
 from src.algorithms.heuristic_algo import HeuristicAlgorithm
@@ -296,6 +299,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Apply public-read ACL to uploaded S3 objects.",
     )
 
+    argcomplete.autocomplete(parser)
     args = parser.parse_args(argv)
 
     # Apply mode presets for any value not explicitly provided on the CLI.

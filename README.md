@@ -99,6 +99,43 @@ Each run directory contains `results.csv`, `chart.png`, and `metrics.json`.
 All runs for the same algorithm are grouped together, making it easy to compare them side-by-side.
 Use `--output` to change the root directory.
 
+## Shell autocompletion
+
+pw2048 supports tab-completion for all CLI flags and their values via
+[argcomplete](https://kislyuk.github.io/argcomplete/).
+
+### One-time setup
+
+**bash**
+
+```bash
+# Activate completion for this script only (add to ~/.bashrc to persist)
+eval "$(register-python-argcomplete main.py)"
+```
+
+**zsh**
+
+```zsh
+# Add to ~/.zshrc
+autoload -U bashcompinit && bashcompinit
+eval "$(register-python-argcomplete main.py)"
+```
+
+**fish** / other shells — see the [argcomplete docs](https://kislyuk.github.io/argcomplete/#activating-global-completion).
+
+### Usage
+
+After activation, press <kbd>Tab</kbd> after `python main.py` to see available flags,
+and again after flags like `--algorithm` or `--mode` to complete their values:
+
+```
+$ python main.py --algorithm <TAB>
+greedy    heuristic    random
+
+$ python main.py --mode <TAB>
+benchmark    dev    release
+```
+
 ## All CLI flags
 
 | Flag | Default | Description |

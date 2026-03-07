@@ -2,3 +2,4 @@ playwright>=1.48.0
 pandas>=2.0.0
 matplotlib>=3.7.0
 boto3>=1.26.0
+argcomplete>=3.0.0
