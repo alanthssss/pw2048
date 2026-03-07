@@ -252,6 +252,67 @@ class TestGenerateHtmlReport:
         content = report.read_text(encoding="utf-8")
         assert "Run History" in content
 
+    # ------------------------------------------------------------------
+    # Algorithm comparison section tests
+    # ------------------------------------------------------------------
+
+    def test_comparison_section_present_with_multiple_algos(self, tmp_path):
+        """Comparison section must appear when two or more algorithms have results."""
+        results_dir = tmp_path / "results"
+        for algo in ("Random", "Greedy"):
+            d = results_dir / algo
+            d.mkdir(parents=True)
+            self._make_csv(d, "20260307_120000")
+
+        report = generate_html_report(results_dir, tmp_path / "index.html")
+        content = report.read_text(encoding="utf-8")
+        assert "Algorithm Comparison" in content
+        assert 'class="cmp-section"' in content
+
+    def test_comparison_section_shows_all_algorithm_names(self, tmp_path):
+        """Every algorithm name should appear inside the comparison table."""
+        results_dir = tmp_path / "results"
+        for algo in ("Random", "Greedy"):
+            d = results_dir / algo
+            d.mkdir(parents=True)
+            self._make_csv(d, "20260307_120000")
+
+        report = generate_html_report(results_dir, tmp_path / "index.html")
+        content = report.read_text(encoding="utf-8")
+        assert "Random" in content
+        assert "Greedy" in content
+
+    def test_comparison_section_absent_for_single_algo(self, tmp_path):
+        """Comparison section must NOT be rendered when only one algorithm exists."""
+        results_dir = tmp_path / "results"
+        algo_dir = results_dir / "Random"
+        algo_dir.mkdir(parents=True)
+        self._make_csv(algo_dir, "20260307_120000")
+
+        report = generate_html_report(results_dir, tmp_path / "index.html")
+        content = report.read_text(encoding="utf-8")
+        assert 'class="cmp-section"' not in content
+
+    def test_comparison_highlights_best_values(self, tmp_path):
+        """Cells with the best metric value should carry the cmp-best CSS class."""
+        results_dir = tmp_path / "results"
+        # AlgoB has superior metrics, so its cells should be highlighted
+        algo_a_dir = results_dir / "AlgoA"
+        algo_a_dir.mkdir(parents=True)
+        rows_a = ["game_index,score,max_tile,move_count,won,duration_s,algorithm"]
+        rows_a.append("1,100,4,10,False,0.5,AlgoA")
+        (algo_a_dir / "20260307_120000.csv").write_text("\n".join(rows_a))
+
+        algo_b_dir = results_dir / "AlgoB"
+        algo_b_dir.mkdir(parents=True)
+        rows_b = ["game_index,score,max_tile,move_count,won,duration_s,algorithm"]
+        rows_b.append("1,9999,2048,500,True,5.0,AlgoB")
+        (algo_b_dir / "20260307_120000.csv").write_text("\n".join(rows_b))
+
+        report = generate_html_report(results_dir, tmp_path / "index.html")
+        content = report.read_text(encoding="utf-8")
+        assert 'class="cmp-best"' in content
+
 
 # ---------------------------------------------------------------------------
 # --parallel argument parsing

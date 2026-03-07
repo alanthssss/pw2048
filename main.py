@@ -48,12 +48,14 @@ import argparse
 from datetime import datetime
 from pathlib import Path
 
+from src.algorithms.greedy_algo import GreedyAlgorithm
 from src.algorithms.random_algo import RandomAlgorithm
 from src.runner import run_games
 from src.visualize import plot_results
 
 ALGORITHMS = {
     "random": RandomAlgorithm,
+    "greedy": GreedyAlgorithm,
 }
 
 _DEFAULT_KEEP = 10

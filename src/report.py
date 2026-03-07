@@ -302,6 +302,34 @@ tbody td {{ padding: 8px 13px; }}
     font-size: 0.83rem;
 }}
 
+/* ── Algorithm comparison table ─────────────────────────────────── */
+.cmp-section {{
+    background: white;
+    border-radius: 12px;
+    box-shadow: 0 2px 12px rgba(0,0,0,.08);
+    margin-bottom: 48px;
+    overflow: hidden;
+}}
+.cmp-header {{
+    background: {header_bg};
+    color: {header_fg};
+    padding: 14px 24px;
+    font-size: 1.3rem;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}}
+.cmp-body {{ padding: 24px; }}
+.cmp-algo {{
+    font-weight: 700;
+    color: {text_dark};
+}}
+.cmp-best {{
+    font-weight: 700;
+    color: {card_accent};
+}}
+
 /* ── Footer ────────────────────────────────────────────────────────── */
 footer {{
     text-align: center;
@@ -562,6 +590,88 @@ def _algo_nav(algo_dirs: list[Path]) -> str:
 </nav>"""
 
 
+def _comparison_section(algo_dirs: list[Path]) -> str:
+    """Build a side-by-side comparison table for all algorithms.
+
+    Only rendered when two or more algorithms have result data.  The cell with
+    the best value in each metric column is highlighted.
+    """
+    rows_data = []
+    for d in algo_dirs:
+        csv_files = sorted(d.glob("*.csv"))
+        if not csv_files:
+            continue
+        frames = []
+        for f in csv_files:
+            try:
+                frames.append(pd.read_csv(f))
+            except Exception:
+                continue
+        if not frames:
+            continue
+        df = pd.concat(frames, ignore_index=True)
+        rows_data.append(
+            {
+                "name": d.name,
+                "total_games": len(df),
+                "avg_score": df["score"].mean(),
+                "best_score": df["score"].max(),
+                "best_tile": df["max_tile"].max(),
+                "win_rate": df["won"].mean() * 100,
+            }
+        )
+
+    if len(rows_data) < 2:
+        return ""
+
+    best_avg = max(r["avg_score"] for r in rows_data)
+    best_score = max(r["best_score"] for r in rows_data)
+    best_tile = max(r["best_tile"] for r in rows_data)
+    best_win = max(r["win_rate"] for r in rows_data)
+
+    def _cell(value: str, is_best: bool) -> str:
+        cls = ' class="cmp-best"' if is_best else ""
+        return f"<td{cls}>{value}</td>"
+
+    rows_html = []
+    for r in rows_data:
+        rows_html.append(
+            "<tr>"
+            f"<td class=\"cmp-algo\">{html.escape(r['name'])}</td>"
+            + _cell(f"{r['total_games']}", False)
+            + _cell(f"{r['avg_score']:,.0f}", r["avg_score"] == best_avg)
+            + _cell(f"{r['best_score']:,}", r["best_score"] == best_score)
+            + _cell(f"{r['best_tile']}", r["best_tile"] == best_tile)
+            + _cell(f"{r['win_rate']:.1f}%", r["win_rate"] == best_win)
+            + "</tr>"
+        )
+
+    rows_html_str = "\n".join(rows_html)
+    return f"""\
+<section class="cmp-section">
+  <div class="cmp-header">📊 Algorithm Comparison</div>
+  <div class="cmp-body">
+    <div class="results-table">
+      <table>
+        <thead>
+          <tr>
+            <th>Algorithm</th>
+            <th>Total Games</th>
+            <th>Avg Score</th>
+            <th>Best Score</th>
+            <th>Best Tile</th>
+            <th>Win Rate</th>
+          </tr>
+        </thead>
+        <tbody>
+{rows_html_str}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>"""
+
+
 def generate_html_report(
     results_dir: str | Path,
     output_path: str | Path,
@@ -597,6 +707,7 @@ def generate_html_report(
     ) if results_dir.exists() else []
 
     nav_html = _algo_nav(algo_dirs)
+    comparison_html = _comparison_section(algo_dirs)
     sections_html = "\n".join(_algo_section(d.name, d) for d in algo_dirs)
 
     if not sections_html.strip():
@@ -627,6 +738,7 @@ def generate_html_report(
 </header>
 {nav_html}
 <main>
+{comparison_html}
 {sections_html}
 </main>
 <footer>pw2048 · Auto-generated results dashboard</footer>
