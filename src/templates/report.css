@@ -382,32 +382,55 @@ footer {
 
 /* ── Stage badge ─────────────────────────────────────────────────── */
 .stage-badge {
-    display: inline-block;
-    padding: 2px 8px;
-    border-radius: 4px;
+    display: inline-flex;
+    align-items: center;
+    padding: 3px 12px;
+    border-radius: 20px;
     font-size: 0.72rem;
     font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: .05em;
+    letter-spacing: .07em;
+    white-space: nowrap;
+    box-shadow: 0 1px 4px rgba(0,0,0,.18), inset 0 -1px 0 rgba(0,0,0,.12);
 }
-.stage-benchmark { background: $card_accent; color: white; }
-.stage-release   { background: $win_badge; color: white; }
-.stage-dev       { background: $nav_bg; color: $nav_fg; }
-.stage-custom    { background: $card_bg; color: $text_dark; }
+.stage-benchmark {
+    background: linear-gradient(135deg, #e07a30, #c96020);
+    color: white;
+}
+.stage-release {
+    background: linear-gradient(135deg, #3aaa6a, #27865a);
+    color: white;
+}
+.stage-dev {
+    background: linear-gradient(135deg, #6b8ec0, #4a6ea0);
+    color: white;
+}
+.stage-custom {
+    background: linear-gradient(135deg, #9e9082, #7d7060);
+    color: white;
+}
 
 /* ── Algorithm type badge ────────────────────────────────────────── */
 .algo-type-badge {
-    display: inline-block;
-    padding: 2px 8px;
-    border-radius: 4px;
+    display: inline-flex;
+    align-items: center;
+    padding: 3px 12px;
+    border-radius: 20px;
     font-size: 0.72rem;
     font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: .05em;
+    letter-spacing: .07em;
     white-space: nowrap;
+    box-shadow: 0 1px 4px rgba(0,0,0,.18), inset 0 -1px 0 rgba(0,0,0,.12);
 }
-.algo-type-baseline { background: #83a598; color: white; }
-.algo-type-search   { background: #d3869b; color: white; }
+.algo-type-baseline {
+    background: linear-gradient(135deg, #2db888, #1a9068);
+    color: white;
+}
+.algo-type-search {
+    background: linear-gradient(135deg, #d05474, #a83055);
+    color: white;
+}
 
 /* ── Rank cells ──────────────────────────────────────────────────── */
 .rank-1 { font-weight: 700; color: $card_accent; }
