@@ -104,29 +104,39 @@ Use `--output` to change the root directory.
 pw2048 supports tab-completion for all CLI flags and their values via
 [argcomplete](https://kislyuk.github.io/argcomplete/).
 
+> **Note — `python main.py` vs `./main.py`**
+>
+> The standard `register-python-argcomplete` command only registers completion
+> when the script is called **directly** (e.g. `./main.py`).  Because most
+> users type `python main.py`, the instructions below use
+> `activate-global-python-argcomplete`, which installs a global Python
+> completion hook that works for any `python <script>` invocation whose first
+> line contains the marker `# PYTHON_ARGCOMPLETE_OK`.
+
 ### One-time setup
 
-**bash**
+**bash** — add to `~/.bashrc`:
 
 ```bash
-# Activate completion for this script only (add to ~/.bashrc to persist)
-eval "$(register-python-argcomplete main.py)"
+eval "$(activate-global-python-argcomplete --dest -)"
 ```
 
-**zsh**
+**zsh** — add to `~/.zshrc`:
 
 ```zsh
-# Add to ~/.zshrc
-autoload -U bashcompinit && bashcompinit
-eval "$(register-python-argcomplete main.py)"
+eval "$(activate-global-python-argcomplete --dest -)"
 ```
+
+Reload your shell (or run the command in your current session), then `cd` to
+the repo directory before pressing <kbd>Tab</kbd>.
 
 **fish** / other shells — see the [argcomplete docs](https://kislyuk.github.io/argcomplete/#activating-global-completion).
 
 ### Usage
 
-After activation, press <kbd>Tab</kbd> after `python main.py` to see available flags,
-and again after flags like `--algorithm` or `--mode` to complete their values:
+After activation, press <kbd>Tab</kbd> after `python main.py` to see available
+flags, and again after flags like `--algorithm` or `--mode` to complete their
+values:
 
 ```
 $ python main.py --algorithm <TAB>
@@ -134,6 +144,10 @@ greedy    heuristic    random
 
 $ python main.py --mode <TAB>
 benchmark    dev    release
+
+$ python main.py --<TAB>
+--algorithm  --games  --keep  --mode  --output  --parallel
+--report     --runs   --show  --s3-bucket  --s3-prefix  --s3-public
 ```
 
 ## All CLI flags
