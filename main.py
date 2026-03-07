@@ -4,8 +4,8 @@ pw2048 – Play 2048 with different algorithms and visualise the results.
 Usage
 -----
     python main.py [--games N] [--algorithm random] [--output results/]
-                   [--keep N] [--report] [--s3-bucket BUCKET]
-                   [--s3-prefix PREFIX] [--s3-public]
+                   [--keep N] [--report] [--parallel N]
+                   [--s3-bucket BUCKET] [--s3-prefix PREFIX] [--s3-public]
 
     Results are saved to <output>/<AlgorithmName>/<timestamp>.{csv,png}, e.g.::
 
@@ -14,12 +14,15 @@ Usage
 
     Grouping by algorithm makes it easy to compare multiple runs side-by-side.
 
-    ``--keep N``  keeps only the *N* most-recent runs per algorithm (locally
+    ``--keep N``     keeps only the *N* most-recent runs per algorithm (locally
     and, when ``--s3-bucket`` is given, on S3).  Defaults to 10.
 
-    ``--report``  generates a self-contained HTML dashboard (``index.html``)
+    ``--report``     generates a self-contained HTML dashboard (``index.html``)
     in the output directory.  When ``--s3-bucket`` is given the report is also
     uploaded to ``<s3-prefix>/index.html``.
+
+    ``--parallel N`` launches *N* browser workers simultaneously, each playing
+    its share of the games.  Defaults to 1 (sequential).
 
 Examples
 --------
@@ -31,6 +34,9 @@ Examples
 
     # Keep the 5 most-recent runs and generate an HTML report
     python main.py --games 10 --keep 5 --report
+
+    # Run 40 games using 4 parallel browser workers
+    python main.py --games 40 --parallel 4 --report
 
     # Upload results to S3
     python main.py --games 10 --s3-bucket my-bucket --report
@@ -135,6 +141,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
              "Pass 0 to disable pruning.",
     )
     parser.add_argument(
+        "--parallel",
+        type=int,
+        default=1,
+        metavar="N",
+        help="Number of parallel browser workers (default: 1 = sequential). "
+             "Each worker runs its share of games in a separate browser instance.",
+    )
+    parser.add_argument(
         "--report",
         action="store_true",
         help="Generate a self-contained HTML results dashboard (index.html) in the output directory.",
@@ -170,8 +184,15 @@ def main(argv: list[str] | None = None) -> None:
     output_dir = build_output_dir(args.output, algorithm.name)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    print(f"\nRunning {args.games} games with the '{algorithm.name}' algorithm…\n")
-    df = run_games(algorithm, n_games=args.games, headless=not args.show)
+    n_workers = max(1, args.parallel)
+    parallel_note = f" ({n_workers} parallel workers)" if n_workers > 1 else ""
+    print(f"\nRunning {args.games} games with the '{algorithm.name}' algorithm{parallel_note}…\n")
+    df = run_games(
+        algorithm,
+        n_games=args.games,
+        headless=not args.show,
+        n_workers=n_workers,
+    )
 
     plot_results(df, output_dir=output_dir, output_stem=timestamp)
 

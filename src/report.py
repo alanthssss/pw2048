@@ -3,6 +3,25 @@
 The produced page is fully self-contained: chart images are embedded as
 base64 data URIs so the file works both locally (file://) and when hosted
 on S3.
+
+Layout
+------
+  ┌─ Header ─────────────────────────────────────────────────────────────┐
+  │  🎮 pw2048 Results Dashboard              Generated: …  N algo(s)   │
+  └──────────────────────────────────────────────────────────────────────┘
+  ┌─ Algo Nav (sticky) ──────────────────────────────────────────────────┐
+  │  [● Random]  [● AlgoB]  …                                            │
+  └──────────────────────────────────────────────────────────────────────┘
+  ┌─ Algorithm Section ──────────────────────────────────────────────────┐
+  │  ┌── Summary stats cards (aggregated across all stored runs) ──────┐ │
+  │  └──────────────────────────────────────────────────────────────────┘ │
+  │  ┌── Run History ──────────────────────────────────────────────────┐ │
+  │  │  ▼ 20260307 130000  20 games  avg 2,399  best 512  10% wins  ◀latest
+  │  │    [Chart] [Per-game table]                                      │ │
+  │  │  ▶ 20260307 120000  20 games  avg 2,250  best 256   5% wins     │ │
+  │  │  ▶ …                                                             │ │
+  │  └──────────────────────────────────────────────────────────────────┘ │
+  └──────────────────────────────────────────────────────────────────────┘
 """
 
 from __future__ import annotations
@@ -22,24 +41,21 @@ _PALETTE = {
     "bg": "#faf8ef",
     "header_bg": "#bbada0",
     "header_fg": "#f9f6f2",
+    "nav_bg": "#cdc1b4",
+    "nav_fg": "#f9f6f2",
+    "nav_active": "#f59563",
     "card_bg": "#eee4da",
     "card_accent": "#f59563",
-    "tile_2": "#eee4da",
-    "tile_4": "#ede0c8",
-    "tile_8": "#f2b179",
-    "tile_16": "#f59563",
-    "tile_32": "#f67c5f",
-    "tile_64": "#f65e3b",
-    "tile_128": "#edcf72",
-    "tile_256": "#edcc61",
-    "tile_512": "#edc850",
-    "tile_1024": "#edc53f",
-    "tile_2048": "#edc22e",
     "text_dark": "#776e65",
     "text_light": "#f9f6f2",
     "table_even": "#f3ede4",
     "win_badge": "#8ec07c",
     "lose_badge": "#cc241d",
+    "run_summary_bg": "#f3ede4",
+    "run_summary_hover": "#e8dfd3",
+    "run_latest_bg": "#fcefd8",
+    "details_border": "#d3c4b4",
+    "section_border": "#eee4da",
 }
 
 _CSS = """\
@@ -50,6 +66,8 @@ body {{
     color: {text_dark};
     line-height: 1.5;
 }}
+
+/* ── Header ────────────────────────────────────────────────────────── */
 header {{
     background: {header_bg};
     color: {header_fg};
@@ -62,15 +80,61 @@ header {{
 }}
 header h1 {{ font-size: 2rem; font-weight: 700; letter-spacing: -0.5px; }}
 header .meta {{ font-size: 0.85rem; opacity: 0.85; text-align: right; }}
+
+/* ── Sticky algo nav bar ────────────────────────────────────────────── */
+.algo-nav {{
+    background: {nav_bg};
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    padding: 10px 24px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    border-bottom: 2px solid rgba(0,0,0,.08);
+}}
+.algo-nav .nav-label {{
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: .1em;
+    color: {nav_fg};
+    opacity: .7;
+    margin-right: 4px;
+    flex-shrink: 0;
+}}
+.algo-nav a {{
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    background: rgba(255,255,255,.18);
+    color: {nav_fg};
+    text-decoration: none;
+    padding: 5px 14px;
+    border-radius: 20px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    transition: background .15s;
+}}
+.algo-nav a:hover {{ background: rgba(255,255,255,.32); }}
+.algo-nav a .nav-dot {{
+    width: 8px; height: 8px;
+    background: {nav_active};
+    border-radius: 50%;
+    display: inline-block;
+}}
+
+/* ── Main layout ────────────────────────────────────────────────────── */
 main {{ max-width: 1100px; margin: 0 auto; padding: 32px 16px 64px; }}
 .algo-section {{
     background: white;
     border-radius: 12px;
     box-shadow: 0 2px 12px rgba(0,0,0,.08);
-    margin-bottom: 40px;
+    margin-bottom: 48px;
     overflow: hidden;
+    scroll-margin-top: 56px;  /* account for sticky nav */
 }}
-.algo-header {{
+.algo-section-header {{
     background: {header_bg};
     color: {header_fg};
     padding: 14px 24px;
@@ -80,58 +144,149 @@ main {{ max-width: 1100px; margin: 0 auto; padding: 32px 16px 64px; }}
     align-items: center;
     gap: 10px;
 }}
-.algo-body {{ padding: 24px; }}
+.algo-section-body {{ padding: 24px; }}
+
+/* ── Aggregate stats cards ─────────────────────────────────────────── */
 .stats-grid {{
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-    gap: 16px;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 14px;
     margin-bottom: 28px;
 }}
 .stat-card {{
     background: {card_bg};
     border-radius: 8px;
-    padding: 16px 20px;
+    padding: 14px 18px;
     text-align: center;
 }}
-.stat-card .stat-label {{ font-size: 0.72rem; text-transform: uppercase;
-    letter-spacing: 0.08em; opacity: 0.7; margin-bottom: 4px; }}
-.stat-card .stat-value {{ font-size: 1.6rem; font-weight: 700;
-    color: {card_accent}; }}
-.chart-wrap {{ text-align: center; margin-bottom: 28px; }}
+.stat-card .stat-label {{
+    font-size: 0.70rem;
+    text-transform: uppercase;
+    letter-spacing: .08em;
+    opacity: .7;
+    margin-bottom: 4px;
+}}
+.stat-card .stat-value {{
+    font-size: 1.55rem;
+    font-weight: 700;
+    color: {card_accent};
+}}
+
+/* ── Run history section title ──────────────────────────────────────── */
+.runs-heading {{
+    font-size: 0.88rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .08em;
+    color: {text_dark};
+    opacity: .65;
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}}
+.runs-heading::after {{
+    content: "";
+    flex: 1;
+    height: 1px;
+    background: {section_border};
+}}
+
+/* ── Run accordion (details/summary) ───────────────────────────────── */
+.run-item {{
+    border: 1px solid {details_border};
+    border-radius: 8px;
+    margin-bottom: 8px;
+    overflow: hidden;
+}}
+.run-item[open] {{
+    border-color: {card_accent};
+    box-shadow: 0 0 0 2px rgba(245,149,99,.2);
+}}
+.run-summary {{
+    list-style: none;
+    padding: 12px 16px;
+    background: {run_summary_bg};
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    user-select: none;
+}}
+.run-item[open] > .run-summary {{
+    background: {run_latest_bg};
+    border-bottom: 1px solid {details_border};
+}}
+.run-summary:hover {{
+    background: {run_summary_hover};
+}}
+.run-summary::-webkit-details-marker {{ display: none; }}
+.run-arrow {{
+    font-size: 0.75rem;
+    transition: transform .2s;
+    flex-shrink: 0;
+    width: 16px;
+    text-align: center;
+}}
+.run-item[open] .run-arrow {{ transform: rotate(90deg); }}
+.run-ts {{
+    font-size: 0.92rem;
+    font-weight: 700;
+    color: {text_dark};
+    flex-shrink: 0;
+}}
+.run-chips {{
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+    margin-left: auto;
+}}
+.chip {{
+    display: inline-block;
+    padding: 2px 9px;
+    border-radius: 12px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    background: rgba(119,110,101,.12);
+    color: {text_dark};
+}}
+.chip-latest {{
+    background: {card_accent};
+    color: white;
+}}
+
+/* ── Expanded run body ──────────────────────────────────────────────── */
+.run-body {{ padding: 20px 20px 16px; }}
+.chart-wrap {{ text-align: center; margin-bottom: 20px; }}
 .chart-wrap img {{
     max-width: 100%;
     border-radius: 8px;
     box-shadow: 0 1px 6px rgba(0,0,0,.12);
 }}
-.section-title {{
-    font-size: 1rem;
-    font-weight: 600;
-    color: {text_dark};
-    margin-bottom: 12px;
-    padding-bottom: 4px;
-    border-bottom: 2px solid {card_bg};
-}}
+
+/* ── Per-game results table ─────────────────────────────────────────── */
 .results-table {{ overflow-x: auto; }}
 table {{
     width: 100%;
     border-collapse: collapse;
-    font-size: 0.88rem;
+    font-size: 0.87rem;
 }}
 thead th {{
     background: {header_bg};
     color: {header_fg};
-    padding: 10px 14px;
+    padding: 9px 13px;
     text-align: left;
     font-weight: 600;
     white-space: nowrap;
 }}
 tbody tr:nth-child(even) {{ background: {table_even}; }}
-tbody td {{ padding: 9px 14px; }}
+tbody td {{ padding: 8px 13px; }}
 .badge {{
     display: inline-block;
     padding: 2px 8px;
     border-radius: 4px;
-    font-size: 0.78rem;
+    font-size: 0.76rem;
     font-weight: 700;
     color: white;
 }}
@@ -139,25 +294,30 @@ tbody td {{ padding: 9px 14px; }}
 .badge-lose {{ background: {lose_badge}; }}
 .tile-chip {{
     display: inline-block;
-    min-width: 48px;
-    padding: 3px 8px;
+    min-width: 46px;
+    padding: 2px 7px;
     border-radius: 4px;
     text-align: center;
     font-weight: 700;
-    font-size: 0.85rem;
+    font-size: 0.83rem;
 }}
+
+/* ── Footer ────────────────────────────────────────────────────────── */
 footer {{
     text-align: center;
     font-size: 0.8rem;
     color: {text_dark};
-    opacity: 0.6;
+    opacity: 0.55;
     padding: 16px;
-    border-top: 1px solid {card_bg};
+    border-top: 1px solid {section_border};
     margin-top: 8px;
 }}
+
+/* ── Responsive ────────────────────────────────────────────────────── */
 @media (max-width: 600px) {{
-    header h1 {{ font-size: 1.4rem; }}
+    header h1 {{ font-size: 1.35rem; }}
     .stat-card .stat-value {{ font-size: 1.2rem; }}
+    .run-chips {{ display: none; }}
 }}
 """.format(**_PALETTE)
 
@@ -195,6 +355,7 @@ def _embed_image(path: Path) -> str | None:
 
 
 def _stats_grid(df: pd.DataFrame) -> str:
+    """Aggregate stats cards computed across *all* stored runs."""
     avg_score = df["score"].mean()
     best_score = df["score"].max()
     best_tile = df["max_tile"].max()
@@ -203,7 +364,7 @@ def _stats_grid(df: pd.DataFrame) -> str:
     return f"""\
 <div class="stats-grid">
   <div class="stat-card">
-    <div class="stat-label">Games</div>
+    <div class="stat-label">Total Games</div>
     <div class="stat-value">{n_games}</div>
   </div>
   <div class="stat-card">
@@ -226,6 +387,7 @@ def _stats_grid(df: pd.DataFrame) -> str:
 
 
 def _results_table(df: pd.DataFrame) -> str:
+    """Render the per-game results as an HTML table."""
     rows: list[str] = []
     for _, row in df.iterrows():
         won_badge = (
@@ -264,13 +426,82 @@ def _results_table(df: pd.DataFrame) -> str:
 </div>"""
 
 
-def _algo_section(algo_name: str, algo_dir: Path) -> str:
-    """Build the HTML section for one algorithm.
+def _run_accordion_item(
+    stem: str,
+    algo_dir: Path,
+    is_latest: bool,
+) -> str:
+    """Build one collapsible ``<details>`` accordion item for a single run.
 
-    Reads all CSV files in *algo_dir*, combines them, and renders:
-    * summary stats cards
-    * the most recent chart (embedded as base64)
-    * a table of the most recent individual game results
+    Parameters
+    ----------
+    stem:
+        Timestamp stem (e.g. ``"20260307_120000"``).
+    algo_dir:
+        Directory containing the run's ``{stem}.csv`` and optional ``{stem}.png``.
+    is_latest:
+        When ``True`` the item is rendered pre-opened and carries a "latest" badge.
+    """
+    csv_path = algo_dir / f"{stem}.csv"
+    try:
+        df = pd.read_csv(csv_path)
+    except Exception:
+        return ""
+
+    n = len(df)
+    avg_score = df["score"].mean()
+    best_tile = df["max_tile"].max()
+    win_rate = df["won"].mean() * 100
+
+    ts_display = stem.replace("_", " ")
+    anchor = f"run-{html.escape(stem)}"
+
+    # Chips shown in the summary row
+    latest_chip = '<span class="chip chip-latest">latest</span>' if is_latest else ""
+    chips_html = (
+        f'<div class="run-chips">'
+        f'{latest_chip}'
+        f'<span class="chip">{n} games</span>'
+        f'<span class="chip">avg {avg_score:,.0f}</span>'
+        f'<span class="chip">best tile {best_tile}</span>'
+        f'<span class="chip">{win_rate:.0f}% wins</span>'
+        f"</div>"
+    )
+
+    # Embedded chart (if the PNG exists)
+    img_src = _embed_image(algo_dir / f"{stem}.png")
+    chart_html = (
+        f'<div class="chart-wrap"><img src="{img_src}" '
+        f'alt="Results chart for {html.escape(stem)}"></div>'
+        if img_src
+        else ""
+    )
+
+    table_html = _results_table(df)
+
+    open_attr = " open" if is_latest else ""
+
+    return f"""\
+<details class="run-item" id="{anchor}"{open_attr}>
+  <summary class="run-summary">
+    <span class="run-arrow">▶</span>
+    <span class="run-ts">📅 {html.escape(ts_display)}</span>
+    {chips_html}
+  </summary>
+  <div class="run-body">
+    {chart_html}
+    {table_html}
+  </div>
+</details>"""
+
+
+def _algo_section(algo_name: str, algo_dir: Path) -> str:
+    """Build the full HTML section for one algorithm.
+
+    Includes:
+    * Aggregate stats cards across all stored runs
+    * Run-history accordion — every stored run as a collapsible item,
+      latest run pre-opened
     """
     csv_files = sorted(algo_dir.glob("*.csv"))
     if not csv_files:
@@ -287,41 +518,48 @@ def _algo_section(algo_name: str, algo_dir: Path) -> str:
         return ""
 
     df_all = pd.concat(frames, ignore_index=True)
-
-    # Stats are computed over *all* available runs in the directory.
     stats_html = _stats_grid(df_all)
 
-    # Chart: use the PNG from the most recent CSV stem.
-    latest_stem = csv_files[-1].stem
-    png_path = algo_dir / f"{latest_stem}.png"
-    img_src = _embed_image(png_path)
-    chart_html = (
-        f'<div class="chart-wrap"><img src="{img_src}" '
-        f'alt="Results chart for {html.escape(algo_name)}"></div>'
-        if img_src
-        else ""
-    )
+    # Build the accordion — newest run first, auto-opened
+    accordion_items: list[str] = []
+    for csv_file in reversed(csv_files):
+        is_latest = csv_file == csv_files[-1]
+        item = _run_accordion_item(csv_file.stem, algo_dir, is_latest=is_latest)
+        if item:
+            accordion_items.append(item)
 
-    # Recent games table: show the last run's individual game rows.
-    df_latest = pd.read_csv(csv_files[-1])
-    table_html = f"""\
-<p class="section-title">Latest Run — {html.escape(latest_stem.replace("_", " "))}</p>
-{_results_table(df_latest)}"""
-
-    runs_label = f"{len(csv_files)} run{'s' if len(csv_files) != 1 else ''}"
+    accordion_html = "\n".join(accordion_items)
+    runs_label = f"{len(csv_files)} run{'s' if len(csv_files) != 1 else ''} stored"
+    section_id = f"algo-{html.escape(algo_name.lower().replace(' ', '-'))}"
 
     return f"""\
-<section class="algo-section">
-  <div class="algo-header">
+<section class="algo-section" id="{section_id}">
+  <div class="algo-section-header">
     🤖 {html.escape(algo_name)}
-    <span style="font-size:0.75rem;font-weight:400;opacity:.8;margin-left:8px">({runs_label} stored)</span>
+    <span style="font-size:0.75rem;font-weight:400;opacity:.8;margin-left:8px">({runs_label})</span>
   </div>
-  <div class="algo-body">
+  <div class="algo-section-body">
     {stats_html}
-    {chart_html}
-    {table_html}
+    <div class="runs-heading">Run History</div>
+    {accordion_html}
   </div>
 </section>"""
+
+
+def _algo_nav(algo_dirs: list[Path]) -> str:
+    """Build the sticky algorithm navigation bar."""
+    if not algo_dirs:
+        return ""
+    links = "\n    ".join(
+        f'<a href="#algo-{html.escape(d.name.lower().replace(" ", "-"))}">'
+        f'<span class="nav-dot"></span>{html.escape(d.name)}</a>'
+        for d in algo_dirs
+    )
+    return f"""\
+<nav class="algo-nav">
+  <span class="nav-label">Jump to</span>
+    {links}
+</nav>"""
 
 
 def generate_html_report(
@@ -332,6 +570,12 @@ def generate_html_report(
 
     Each sub-directory of *results_dir* is treated as an algorithm results
     folder (matching the directory layout created by ``main.py``).
+
+    The page includes:
+    * A sticky navigation bar linking to each algorithm's section
+    * Per-algorithm aggregate stats cards
+    * A run-history accordion showing every stored run with its chart and
+      per-game results table; the most recent run is pre-expanded
 
     Parameters
     ----------
@@ -352,9 +596,8 @@ def generate_html_report(
         p for p in results_dir.iterdir() if p.is_dir()
     ) if results_dir.exists() else []
 
-    sections_html = "\n".join(
-        _algo_section(d.name, d) for d in algo_dirs
-    )
+    nav_html = _algo_nav(algo_dirs)
+    sections_html = "\n".join(_algo_section(d.name, d) for d in algo_dirs)
 
     if not sections_html.strip():
         sections_html = (
@@ -382,6 +625,7 @@ def generate_html_report(
     {len(algo_dirs)} algorithm(s)
   </div>
 </header>
+{nav_html}
 <main>
 {sections_html}
 </main>

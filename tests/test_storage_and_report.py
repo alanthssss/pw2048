@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 import pathlib
-import textwrap
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
 import pytest
 
-from main import prune_local_results
+from main import prune_local_results, parse_args
 from src.report import generate_html_report
 
 
@@ -80,7 +79,7 @@ class TestPruneLocalResults:
 
 
 # ---------------------------------------------------------------------------
-# generate_html_report
+# generate_html_report  (dashboard tests)
 # ---------------------------------------------------------------------------
 
 
@@ -171,6 +170,110 @@ class TestGenerateHtmlReport:
         generate_html_report(results_dir, nested_output)
         assert nested_output.exists()
 
+    # ------------------------------------------------------------------
+    # Run-history accordion tests
+    # ------------------------------------------------------------------
+
+    def test_run_history_shows_all_runs(self, tmp_path):
+        """Every stored run should appear as an accordion item."""
+        results_dir = tmp_path / "results"
+        algo_dir = results_dir / "Random"
+        algo_dir.mkdir(parents=True)
+        stems = ["20260307_100000", "20260307_110000", "20260307_120000"]
+        for stem in stems:
+            self._make_csv(algo_dir, stem)
+
+        report = generate_html_report(results_dir, tmp_path / "index.html")
+        content = report.read_text(encoding="utf-8")
+        for stem in stems:
+            assert stem in content, f"Expected run {stem} in the report"
+
+    def test_latest_run_is_pre_opened(self, tmp_path):
+        """The most recent run's <details> must have the `open` attribute."""
+        results_dir = tmp_path / "results"
+        algo_dir = results_dir / "Random"
+        algo_dir.mkdir(parents=True)
+        self._make_csv(algo_dir, "20260307_110000")
+        self._make_csv(algo_dir, "20260307_120000")  # latest
+
+        report = generate_html_report(results_dir, tmp_path / "index.html")
+        content = report.read_text(encoding="utf-8")
+        # The latest run's anchor id should appear in an open <details>
+        assert 'id="run-20260307_120000"' in content
+        # The details element for the latest run should carry `open`
+        assert 'id="run-20260307_120000" open' in content
+
+    def test_older_runs_are_collapsed(self, tmp_path):
+        """Older runs must NOT have the `open` attribute on their <details>."""
+        results_dir = tmp_path / "results"
+        algo_dir = results_dir / "Random"
+        algo_dir.mkdir(parents=True)
+        self._make_csv(algo_dir, "20260307_110000")
+        self._make_csv(algo_dir, "20260307_120000")  # latest
+
+        report = generate_html_report(results_dir, tmp_path / "index.html")
+        content = report.read_text(encoding="utf-8")
+        assert 'id="run-20260307_110000" open' not in content
+
+    def test_latest_chip_present(self, tmp_path):
+        """The most recent run should carry a 'latest' chip in its summary."""
+        results_dir = tmp_path / "results"
+        algo_dir = results_dir / "Random"
+        algo_dir.mkdir(parents=True)
+        self._make_csv(algo_dir, "20260307_110000")
+        self._make_csv(algo_dir, "20260307_120000")
+
+        report = generate_html_report(results_dir, tmp_path / "index.html")
+        content = report.read_text(encoding="utf-8")
+        assert "chip-latest" in content
+
+    def test_algo_nav_bar_rendered(self, tmp_path):
+        """A navigation bar with links to each algorithm should be present."""
+        results_dir = tmp_path / "results"
+        for algo in ("AlgoA", "AlgoB"):
+            d = results_dir / algo
+            d.mkdir(parents=True)
+            self._make_csv(d, "20260307_120000")
+
+        report = generate_html_report(results_dir, tmp_path / "index.html")
+        content = report.read_text(encoding="utf-8")
+        assert 'class="algo-nav"' in content
+        assert "#algo-algoa" in content
+        assert "#algo-algob" in content
+
+    def test_run_history_heading_present(self, tmp_path):
+        """Each algorithm section should include a 'Run History' heading."""
+        results_dir = tmp_path / "results"
+        algo_dir = results_dir / "Random"
+        algo_dir.mkdir(parents=True)
+        self._make_csv(algo_dir, "20260307_120000")
+
+        report = generate_html_report(results_dir, tmp_path / "index.html")
+        content = report.read_text(encoding="utf-8")
+        assert "Run History" in content
+
+
+# ---------------------------------------------------------------------------
+# --parallel argument parsing
+# ---------------------------------------------------------------------------
+
+
+class TestParallelArgParsing:
+    """Unit tests for the new --parallel CLI argument."""
+
+    def test_default_parallel_is_one(self):
+        args = parse_args([])
+        assert args.parallel == 1
+
+    def test_parallel_flag_sets_value(self):
+        args = parse_args(["--parallel", "4"])
+        assert args.parallel == 4
+
+    def test_parallel_two_workers(self):
+        args = parse_args(["--games", "10", "--parallel", "2"])
+        assert args.parallel == 2
+        assert args.games == 10
+
 
 # ---------------------------------------------------------------------------
 # S3 helpers (mocked – no real AWS calls)
@@ -236,3 +339,4 @@ class TestStorageHelpers:
         with patch("src.storage._HAS_BOTO3", False):
             with pytest.raises(ImportError, match="boto3"):
                 _require_boto3()
+
