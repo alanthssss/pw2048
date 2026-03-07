@@ -87,9 +87,12 @@ class TestGenerateHtmlReport:
     """Unit tests for the HTML report generator."""
 
     def _make_csv(self, directory: pathlib.Path, stem: str, n: int = 3) -> None:
-        rows = ["game_index,score,max_tile,move_count,won,duration_s,algorithm"]
+        rows = ["run_id,game_index,algorithm,score,best_tile,moves,duration,won,timestamp"]
         for i in range(1, n + 1):
-            rows.append(f"{i},{i * 100},{2 ** (i + 2)},{50 * i},False,{i * 0.5},Random")
+            rows.append(
+                f"{stem},{i},Random,{i * 100},{2 ** (i + 2)},{50 * i},{i * 0.5},False,"
+                f"2026-03-07T12:00:0{i}Z"
+            )
         (directory / f"{stem}.csv").write_text("\n".join(rows))
 
     def test_creates_html_file(self, tmp_path):
@@ -299,14 +302,14 @@ class TestGenerateHtmlReport:
         # AlgoB has superior metrics, so its cells should be highlighted
         algo_a_dir = results_dir / "AlgoA"
         algo_a_dir.mkdir(parents=True)
-        rows_a = ["game_index,score,max_tile,move_count,won,duration_s,algorithm"]
-        rows_a.append("1,100,4,10,False,0.5,AlgoA")
+        rows_a = ["run_id,game_index,algorithm,score,best_tile,moves,duration,won,timestamp"]
+        rows_a.append("run1,1,AlgoA,100,4,10,0.5,False,2026-03-07T12:00:00Z")
         (algo_a_dir / "20260307_120000.csv").write_text("\n".join(rows_a))
 
         algo_b_dir = results_dir / "AlgoB"
         algo_b_dir.mkdir(parents=True)
-        rows_b = ["game_index,score,max_tile,move_count,won,duration_s,algorithm"]
-        rows_b.append("1,9999,2048,500,True,5.0,AlgoB")
+        rows_b = ["run_id,game_index,algorithm,score,best_tile,moves,duration,won,timestamp"]
+        rows_b.append("run1,1,AlgoB,9999,2048,500,5.0,True,2026-03-07T12:00:01Z")
         (algo_b_dir / "20260307_120000.csv").write_text("\n".join(rows_b))
 
         report = generate_html_report(results_dir, tmp_path / "index.html")
@@ -401,3 +404,235 @@ class TestStorageHelpers:
             with pytest.raises(ImportError, match="boto3"):
                 _require_boto3()
 
+
+
+# ---------------------------------------------------------------------------
+# --mode argument parsing
+# ---------------------------------------------------------------------------
+
+
+class TestModeArgParsing:
+    """Unit tests for the --mode CLI argument."""
+
+    def test_default_mode_is_none(self):
+        args = parse_args([])
+        assert args.mode is None
+
+    def test_mode_dev_sets_presets(self):
+        args = parse_args(["--mode", "dev"])
+        assert args.games == 100
+        assert args.runs == 1
+
+    def test_mode_release_sets_presets(self):
+        args = parse_args(["--mode", "release"])
+        assert args.games == 1000
+        assert args.runs == 1
+
+    def test_mode_benchmark_sets_presets(self):
+        args = parse_args(["--mode", "benchmark"])
+        assert args.games == 500
+        assert args.runs == 5
+
+    def test_explicit_games_overrides_mode(self):
+        args = parse_args(["--mode", "dev", "--games", "42"])
+        assert args.games == 42
+
+    def test_explicit_runs_overrides_mode(self):
+        args = parse_args(["--mode", "benchmark", "--runs", "2"])
+        assert args.runs == 2
+
+    def test_explicit_parallel_overrides_mode(self):
+        args = parse_args(["--mode", "dev", "--parallel", "3"])
+        assert args.parallel == 3
+
+    def test_default_games_without_mode(self):
+        args = parse_args([])
+        assert args.games == 20
+
+    def test_default_runs_without_mode(self):
+        args = parse_args([])
+        assert args.runs == 1
+
+    def test_invalid_mode_raises(self):
+        with pytest.raises(SystemExit):
+            parse_args(["--mode", "invalid"])
+
+
+# ---------------------------------------------------------------------------
+# Visualize metrics / distribution functions
+# ---------------------------------------------------------------------------
+
+
+class TestComputeRunMetrics:
+    """Unit tests for compute_run_metrics() in visualize.py."""
+
+    def _make_df(self) -> pd.DataFrame:
+        return pd.DataFrame({
+            "run_id": ["r1"] * 4,
+            "game_index": [1, 2, 3, 4],
+            "algorithm": ["Random"] * 4,
+            "score": [100, 200, 300, 400],
+            "best_tile": [64, 128, 256, 512],
+            "moves": [50, 100, 150, 200],
+            "duration": [1.0, 2.0, 3.0, 4.0],
+            "won": [False, False, False, True],
+            "timestamp": ["2026-03-07T12:00:00Z"] * 4,
+        })
+
+    def test_avg_score(self):
+        from src.visualize import compute_run_metrics
+        m = compute_run_metrics(self._make_df())
+        assert m["avg_score"] == pytest.approx(250.0)
+
+    def test_median_score(self):
+        from src.visualize import compute_run_metrics
+        m = compute_run_metrics(self._make_df())
+        assert m["median_score"] == pytest.approx(250.0)
+
+    def test_p90_score(self):
+        from src.visualize import compute_run_metrics
+        m = compute_run_metrics(self._make_df())
+        assert m["p90_score"] == pytest.approx(370.0)
+
+    def test_max_score(self):
+        from src.visualize import compute_run_metrics
+        m = compute_run_metrics(self._make_df())
+        assert m["max_score"] == 400
+
+    def test_avg_moves(self):
+        from src.visualize import compute_run_metrics
+        m = compute_run_metrics(self._make_df())
+        assert m["avg_moves"] == pytest.approx(125.0)
+
+    def test_avg_duration(self):
+        from src.visualize import compute_run_metrics
+        m = compute_run_metrics(self._make_df())
+        assert m["avg_duration"] == pytest.approx(2.5)
+
+    def test_avg_best_tile(self):
+        from src.visualize import compute_run_metrics
+        m = compute_run_metrics(self._make_df())
+        assert m["avg_best_tile"] == pytest.approx(240.0)
+
+    def test_win_rate(self):
+        from src.visualize import compute_run_metrics
+        m = compute_run_metrics(self._make_df())
+        assert m["win_rate"] == pytest.approx(25.0)
+
+    def test_games_per_second(self):
+        from src.visualize import compute_run_metrics
+        m = compute_run_metrics(self._make_df())
+        # 4 games / 10.0 total seconds = 0.4
+        assert m["games_per_second"] == pytest.approx(0.4)
+
+    def test_all_keys_present(self):
+        from src.visualize import compute_run_metrics
+        m = compute_run_metrics(self._make_df())
+        expected_keys = {
+            "avg_score", "median_score", "p90_score", "max_score",
+            "avg_moves", "avg_duration", "avg_best_tile", "win_rate",
+            "games_per_second",
+        }
+        assert set(m.keys()) == expected_keys
+
+
+class TestDistributions:
+    """Unit tests for score/moves/tile distribution functions."""
+
+    def _make_df(self) -> pd.DataFrame:
+        return pd.DataFrame({
+            "run_id": ["r1"] * 5,
+            "game_index": [1, 2, 3, 4, 5],
+            "algorithm": ["Random"] * 5,
+            "score": [100, 200, 300, 400, 500],
+            "best_tile": [64, 128, 128, 256, 512],
+            "moves": [50, 100, 150, 200, 250],
+            "duration": [1.0, 2.0, 3.0, 4.0, 5.0],
+            "won": [False, False, False, False, True],
+            "timestamp": ["2026-03-07T12:00:00Z"] * 5,
+        })
+
+    def test_tile_distribution_returns_dict(self):
+        from src.visualize import tile_distribution
+        d = tile_distribution(self._make_df())
+        assert isinstance(d, dict)
+
+    def test_tile_distribution_sums_to_n_games(self):
+        from src.visualize import tile_distribution
+        d = tile_distribution(self._make_df())
+        assert sum(d.values()) == 5
+
+    def test_tile_distribution_counts_correct(self):
+        from src.visualize import tile_distribution
+        d = tile_distribution(self._make_df())
+        assert d[64] == 1
+        assert d[128] == 2
+        assert d[256] == 1
+        assert d[512] == 1
+
+    def test_score_distribution_returns_dict(self):
+        from src.visualize import score_distribution
+        d = score_distribution(self._make_df())
+        assert isinstance(d, dict)
+
+    def test_score_distribution_sums_to_n_games(self):
+        from src.visualize import score_distribution
+        d = score_distribution(self._make_df(), bins=5)
+        assert sum(d.values()) == 5
+
+    def test_moves_distribution_returns_dict(self):
+        from src.visualize import moves_distribution
+        d = moves_distribution(self._make_df())
+        assert isinstance(d, dict)
+
+    def test_moves_distribution_sums_to_n_games(self):
+        from src.visualize import moves_distribution
+        d = moves_distribution(self._make_df(), bins=5)
+        assert sum(d.values()) == 5
+
+
+# ---------------------------------------------------------------------------
+# Dashboard comparison table (new Median/P90/Max columns)
+# ---------------------------------------------------------------------------
+
+
+class TestComparisonTableColumns:
+    """Verify the new comparison table headers are rendered."""
+
+    def _make_csv(self, directory: pathlib.Path, stem: str) -> None:
+        rows = ["run_id,game_index,algorithm,score,best_tile,moves,duration,won,timestamp"]
+        rows.append(f"{stem},1,AlgoA,500,128,100,2.0,False,2026-03-07T12:00:00Z")
+        (directory / f"{stem}.csv").write_text("\n".join(rows))
+
+    def test_comparison_table_has_median_column(self, tmp_path):
+        results_dir = tmp_path / "results"
+        for algo in ("AlgoA", "AlgoB"):
+            d = results_dir / algo
+            d.mkdir(parents=True)
+            self._make_csv(d, "20260307_120000")
+
+        report = generate_html_report(results_dir, tmp_path / "index.html")
+        content = report.read_text(encoding="utf-8")
+        assert "Median" in content
+
+    def test_comparison_table_has_p90_column(self, tmp_path):
+        results_dir = tmp_path / "results"
+        for algo in ("AlgoA", "AlgoB"):
+            d = results_dir / algo
+            d.mkdir(parents=True)
+            self._make_csv(d, "20260307_120000")
+
+        report = generate_html_report(results_dir, tmp_path / "index.html")
+        content = report.read_text(encoding="utf-8")
+        assert "P90" in content
+
+    def test_comparison_table_has_max_column(self, tmp_path):
+        results_dir = tmp_path / "results"
+        for algo in ("AlgoA", "AlgoB"):
+            d = results_dir / algo
+            d.mkdir(parents=True)
+            self._make_csv(d, "20260307_120000")
+
+        report = generate_html_report(results_dir, tmp_path / "index.html")
+        content = report.read_text(encoding="utf-8")
+        assert "Max" in content

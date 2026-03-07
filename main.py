@@ -3,7 +3,8 @@ pw2048 – Play 2048 with different algorithms and visualise the results.
 
 Usage
 -----
-    python main.py [--games N] [--algorithm random] [--output results/]
+    python main.py [--mode dev|release|benchmark]
+                   [--games N] [--runs N] [--algorithm random] [--output results/]
                    [--keep N] [--report] [--parallel N]
                    [--s3-bucket BUCKET] [--s3-prefix PREFIX] [--s3-public]
 
@@ -13,6 +14,11 @@ Usage
         results/Random/20260307_120000.png
 
     Grouping by algorithm makes it easy to compare multiple runs side-by-side.
+
+    ``--mode``       sets games/runs/parallel automatically:
+                     dev: 100 games, 1 run, parallel=auto
+                     release: 1000 games, 1 run, parallel=auto
+                     benchmark: 500 games, 5 runs, parallel=auto
 
     ``--keep N``     keeps only the *N* most-recent runs per algorithm (locally
     and, when ``--s3-bucket`` is given, on S3).  Defaults to 10.
@@ -28,6 +34,12 @@ Examples
 --------
     # Run 20 games with the random algorithm (default)
     python main.py --games 20
+
+    # Quick dev scratch run (100 games, auto-parallel)
+    python main.py --mode dev
+
+    # Benchmark run (500 games × 5 runs, auto-parallel)
+    python main.py --mode benchmark --report
 
     # Show the browser window while playing
     python main.py --games 5 --show
@@ -45,6 +57,7 @@ Examples
 from __future__ import annotations
 
 import argparse
+import os
 from datetime import datetime
 from pathlib import Path
 
@@ -60,6 +73,16 @@ ALGORITHMS = {
 
 _DEFAULT_KEEP = 10
 _DEFAULT_S3_PREFIX = "results"
+
+# Mode presets: games, runs, parallel ("auto" → os.cpu_count())
+_MODE_PRESETS: dict[str, dict] = {
+    "dev":       {"games": 100,  "runs": 1, "parallel": os.cpu_count() or 1},
+    "release":   {"games": 1000, "runs": 1, "parallel": os.cpu_count() or 1},
+    "benchmark": {"games": 500,  "runs": 5, "parallel": os.cpu_count() or 1},
+}
+_DEFAULT_GAMES = 20
+_DEFAULT_RUNS = 1
+_DEFAULT_PARALLEL = 1
 
 
 def build_output_dir(base: str | Path, algorithm_name: str) -> Path:
@@ -120,7 +143,26 @@ def prune_local_results(output_dir: Path, keep_n: int) -> list[Path]:
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Play 2048 with algorithms via Playwright")
-    parser.add_argument("--games", type=int, default=20, help="Number of games to play (default: 20)")
+    parser.add_argument(
+        "--mode",
+        choices=["dev", "release", "benchmark"],
+        default=None,
+        help=(
+            "Run mode preset — sets games/runs/parallel automatically. "
+            "dev: 100 games, 1 run; release: 1000 games, 1 run; "
+            "benchmark: 500 games, 5 runs. "
+            "Explicit --games/--runs/--parallel flags override the preset."
+        ),
+    )
+    parser.add_argument("--games", type=int, default=None, help="Number of games per run (default: 20)")
+    parser.add_argument(
+        "--runs",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Number of times to repeat the full set of games (default: 1). "
+             "Each run produces its own CSV/PNG with a unique run_id.",
+    )
     parser.add_argument(
         "--algorithm",
         choices=list(ALGORITHMS.keys()),
@@ -145,7 +187,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--parallel",
         type=int,
-        default=1,
+        default=None,
         metavar="N",
         help="Number of parallel browser workers (default: 1 = sequential). "
              "Each worker runs its share of games in a separate browser instance.",
@@ -173,7 +215,28 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Apply public-read ACL to uploaded S3 objects.",
     )
-    return parser.parse_args(argv)
+
+    args = parser.parse_args(argv)
+
+    # Apply mode presets for any value not explicitly provided on the CLI.
+    if args.mode is not None:
+        preset = _MODE_PRESETS[args.mode]
+        if args.games is None:
+            args.games = preset["games"]
+        if args.runs is None:
+            args.runs = preset["runs"]
+        if args.parallel is None:
+            args.parallel = preset["parallel"]
+
+    # Fall back to plain defaults when no mode was given.
+    if args.games is None:
+        args.games = _DEFAULT_GAMES
+    if args.runs is None:
+        args.runs = _DEFAULT_RUNS
+    if args.parallel is None:
+        args.parallel = _DEFAULT_PARALLEL
+
+    return args
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -182,26 +245,39 @@ def main(argv: list[str] | None = None) -> None:
     algo_cls = ALGORITHMS[args.algorithm]
     algorithm = algo_cls()
 
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     output_dir = build_output_dir(args.output, algorithm.name)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     n_workers = max(1, args.parallel)
+    n_runs = max(1, args.runs)
     parallel_note = f" ({n_workers} parallel workers)" if n_workers > 1 else ""
-    print(f"\nRunning {args.games} games with the '{algorithm.name}' algorithm{parallel_note}…\n")
-    df = run_games(
-        algorithm,
-        n_games=args.games,
-        headless=not args.show,
-        n_workers=n_workers,
+    runs_note = f" × {n_runs} run(s)" if n_runs > 1 else ""
+    print(
+        f"\nRunning {args.games} games{runs_note} with the '{algorithm.name}' algorithm{parallel_note}…\n"
     )
 
-    plot_results(df, output_dir=output_dir, output_stem=timestamp)
+    last_timestamp = None
+    for run_num in range(1, n_runs + 1):
+        if n_runs > 1:
+            print(f"\n─── Run {run_num}/{n_runs} ───")
 
-    # Save raw data
-    csv_path = output_dir / f"{timestamp}.csv"
-    df.to_csv(csv_path, index=False)
-    print(f"Raw data saved → {csv_path}")
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        last_timestamp = timestamp
+
+        df = run_games(
+            algorithm,
+            n_games=args.games,
+            headless=not args.show,
+            n_workers=n_workers,
+            run_id=timestamp,
+        )
+
+        plot_results(df, output_dir=output_dir, output_stem=timestamp)
+
+        # Save raw data
+        csv_path = output_dir / f"{timestamp}.csv"
+        df.to_csv(csv_path, index=False)
+        print(f"Raw data saved → {csv_path}")
 
     # ------------------------------------------------------------------
     # Prune old local results
@@ -227,7 +303,7 @@ def main(argv: list[str] | None = None) -> None:
         print(f"\nUploading results to s3://{args.s3_bucket}/{args.s3_prefix}/…")
         sync_run_to_s3(
             output_dir=output_dir,
-            timestamp=timestamp,
+            timestamp=last_timestamp,
             bucket=args.s3_bucket,
             s3_prefix=args.s3_prefix,
             algorithm_name=algorithm.name,

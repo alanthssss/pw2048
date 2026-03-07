@@ -386,7 +386,7 @@ def _stats_grid(df: pd.DataFrame) -> str:
     """Aggregate stats cards computed across *all* stored runs."""
     avg_score = df["score"].mean()
     best_score = df["score"].max()
-    best_tile = df["max_tile"].max()
+    best_tile = df["best_tile"].max()
     win_rate = df["won"].mean() * 100
     n_games = len(df)
     return f"""\
@@ -427,9 +427,9 @@ def _results_table(df: pd.DataFrame) -> str:
             f"<tr>"
             f"<td>{int(row['game_index'])}</td>"
             f"<td>{int(row['score']):,}</td>"
-            f"<td>{_tile_chip(int(row['max_tile']))}</td>"
-            f"<td>{int(row['move_count'])}</td>"
-            f"<td>{float(row['duration_s']):.1f}s</td>"
+            f"<td>{_tile_chip(int(row['best_tile']))}</td>"
+            f"<td>{int(row['moves'])}</td>"
+            f"<td>{float(row['duration']):.1f}s</td>"
             f"<td>{won_badge}</td>"
             f"</tr>"
         )
@@ -478,7 +478,7 @@ def _run_accordion_item(
 
     n = len(df)
     avg_score = df["score"].mean()
-    best_tile = df["max_tile"].max()
+    best_tile = df["best_tile"].max()
     win_rate = df["won"].mean() * 100
 
     ts_display = stem.replace("_", " ")
@@ -614,20 +614,24 @@ def _comparison_section(algo_dirs: list[Path]) -> str:
             {
                 "name": d.name,
                 "total_games": len(df),
-                "avg_score": df["score"].mean(),
-                "best_score": df["score"].max(),
-                "best_tile": df["max_tile"].max(),
-                "win_rate": df["won"].mean() * 100,
+                "avg_score":    df["score"].mean(),
+                "median_score": df["score"].median(),
+                "p90_score":    df["score"].quantile(0.9),
+                "max_score":    df["score"].max(),
+                "best_tile":    df["best_tile"].max(),
+                "win_rate":     df["won"].mean() * 100,
             }
         )
 
     if len(rows_data) < 2:
         return ""
 
-    best_avg = max(r["avg_score"] for r in rows_data)
-    best_score = max(r["best_score"] for r in rows_data)
-    best_tile = max(r["best_tile"] for r in rows_data)
-    best_win = max(r["win_rate"] for r in rows_data)
+    best_avg    = max(r["avg_score"]    for r in rows_data)
+    best_median = max(r["median_score"] for r in rows_data)
+    best_p90    = max(r["p90_score"]    for r in rows_data)
+    best_max    = max(r["max_score"]    for r in rows_data)
+    best_tile   = max(r["best_tile"]    for r in rows_data)
+    best_win    = max(r["win_rate"]     for r in rows_data)
 
     def _cell(value: str, is_best: bool) -> str:
         cls = ' class="cmp-best"' if is_best else ""
@@ -639,10 +643,12 @@ def _comparison_section(algo_dirs: list[Path]) -> str:
             "<tr>"
             f"<td class=\"cmp-algo\">{html.escape(r['name'])}</td>"
             + _cell(f"{r['total_games']}", False)
-            + _cell(f"{r['avg_score']:,.0f}", r["avg_score"] == best_avg)
-            + _cell(f"{r['best_score']:,}", r["best_score"] == best_score)
-            + _cell(f"{r['best_tile']}", r["best_tile"] == best_tile)
-            + _cell(f"{r['win_rate']:.1f}%", r["win_rate"] == best_win)
+            + _cell(f"{r['avg_score']:,.0f}",    r["avg_score"]    == best_avg)
+            + _cell(f"{r['median_score']:,.0f}", r["median_score"] == best_median)
+            + _cell(f"{r['p90_score']:,.0f}",    r["p90_score"]    == best_p90)
+            + _cell(f"{r['max_score']:,}",       r["max_score"]    == best_max)
+            + _cell(f"{r['best_tile']}",         r["best_tile"]    == best_tile)
+            + _cell(f"{r['win_rate']:.1f}%",     r["win_rate"]     == best_win)
             + "</tr>"
         )
 
@@ -656,11 +662,13 @@ def _comparison_section(algo_dirs: list[Path]) -> str:
         <thead>
           <tr>
             <th>Algorithm</th>
-            <th>Total Games</th>
-            <th>Avg Score</th>
-            <th>Best Score</th>
+            <th>Games</th>
+            <th>Avg</th>
+            <th>Median</th>
+            <th>P90</th>
+            <th>Max</th>
             <th>Best Tile</th>
-            <th>Win Rate</th>
+            <th>Win %</th>
           </tr>
         </thead>
         <tbody>
