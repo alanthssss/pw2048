@@ -2,6 +2,12 @@
 
 Automate the [2048 game](https://play2048.co/) using [Playwright](https://playwright.dev/python/) and collect fancy data visualizations of each algorithm's performance.
 
+## Screenshots
+
+| 2048 Game | Web Launcher |
+|:---------:|:------------:|
+| ![2048 game launch page](https://github.com/user-attachments/assets/971b6d73-36f0-4d47-b9da-0c27a9c3b5f2) | ![pw2048 Web Launcher](https://github.com/user-attachments/assets/08d9b84a-8180-475b-ae71-63b753c0d55a) |
+
 ## At a Glance
 
 | Field | Value |
@@ -67,6 +73,9 @@ pw2048/
 │   ├── visualize.py           # Matplotlib charts from results
 │   ├── report.py              # Self-contained HTML dashboard generator
 │   ├── storage.py             # S3 upload / prune helpers (lazy boto3 import)
+│   ├── tui.py                 # Interactive TUI wizard (questionary + rich)
+│   ├── gui.py                 # Desktop GUI wizard (tkinter – stdlib)
+│   ├── webui.py               # Web UI launcher (http.server – stdlib)
 │   └── algorithms/
 │       ├── base.py            # Abstract BaseAlgorithm class
 │       ├── random_algo.py     # Random algorithm
@@ -74,7 +83,10 @@ pw2048/
 │       └── heuristic_algo.py  # Heuristic (empty tiles, monotonicity, corner, merge)
 └── tests/
     ├── test_game_and_algorithms.py
-    └── test_storage_and_report.py
+    ├── test_storage_and_report.py
+    ├── test_tui.py
+    ├── test_gui.py
+    └── test_webui.py
 ```
 
 ## Quick start
@@ -83,6 +95,15 @@ pw2048/
 # Install dependencies
 pip install -r requirements.txt
 python -m playwright install chromium
+
+# Launch the interactive TUI wizard
+python main.py --tui
+
+# Launch the desktop GUI wizard (tkinter)
+python main.py --gui
+
+# Launch the web UI wizard in your browser
+python main.py --web
 
 # Run 20 games with the random algorithm (default)
 python main.py
@@ -98,6 +119,109 @@ Charts and a CSV with raw game data are saved under `results/<AlgorithmName>/run
 Each run directory contains `results.csv`, `chart.png`, and `metrics.json`.
 All runs for the same algorithm are grouped together, making it easy to compare them side-by-side.
 Use `--output` to change the root directory.
+
+## Interactive TUI wizard
+
+Not a fan of memorising flags?  Run the wizard:
+
+```bash
+python main.py --tui
+```
+
+The wizard walks you through every option step-by-step with arrow-key
+selection menus and validated text prompts:
+
+```
+╭───────────────────────────────────────────────╮
+│  pw2048 – Interactive Launcher                │
+│  Use arrow keys to select, Enter to confirm.  │
+╰───────────────────────────────────────────────╯
+
+? Algorithm:        greedy
+? Run mode:         custom – set games / runs / parallel manually
+? Number of games per run:  50
+? Number of runs:           2
+? Parallel browser workers: 2
+? Output directory:         results
+? Show browser window while playing?  No
+? Keep N most-recent runs per algorithm (0 = keep all):  10
+? Generate HTML report?   Yes
+? Upload results to S3?   No
+
+   Configuration Summary
+┌──────────────┬──────────┐
+│ Algorithm    │ greedy   │
+│ Games / run  │ 50       │
+│ Runs         │ 2        │
+│ Workers      │ 2        │
+│ Output dir   │ results/ │
+│ Show browser │ no       │
+│ Keep N runs  │ 10       │
+│ HTML report  │ yes      │
+│ S3 bucket    │ –        │
+└──────────────┴──────────┘
+
+? Proceed? Yes
+```
+
+Press <kbd>Ctrl-C</kbd> at any prompt, or answer **No** at the final
+confirmation, to abort without running any games.
+
+The wizard covers all parameters available via CLI flags:
+
+| Wizard step | Equivalent flag(s) |
+|---|---|
+| Algorithm | `--algorithm` |
+| Run mode (preset) | `--mode` |
+| Games / runs / workers (custom) | `--games`, `--runs`, `--parallel` |
+| Output directory | `--output` |
+| Show browser | `--show` |
+| Keep N runs | `--keep` |
+| HTML report | `--report` |
+| S3 upload | `--s3-bucket`, `--s3-prefix`, `--s3-public` |
+
+## Desktop GUI wizard
+
+Prefer a point-and-click interface?  Launch the native tkinter window:
+
+```bash
+python main.py --gui
+```
+
+The window exposes the same options as the TUI — algorithm, mode, games/runs/workers,
+output directory, show-browser, keep-N, HTML report, and optional S3 upload — all
+in a standard form layout with dropdown menus, checkboxes, and text fields.
+
+**Prerequisites:** tkinter ships with Python on Windows and macOS.  On
+Debian/Ubuntu it requires one extra package:
+
+```bash
+sudo apt-get install python3-tk
+```
+
+## Web UI wizard
+
+Prefer a browser-based form?  Start the local web launcher:
+
+```bash
+python main.py --web
+```
+
+pw2048 starts an HTTP server on a random free port, prints the URL, and opens it
+in your default browser automatically:
+
+```
+  Web UI → http://127.0.0.1:54321/
+  (fill in the form and click Launch — check your terminal for progress)
+```
+
+The form stays open until you click **Launch ▶**, at which point it returns a
+confirmation page, shuts the server down, and starts the run in your terminal.
+
+![pw2048 Web Launcher](https://github.com/user-attachments/assets/08d9b84a-8180-475b-ae71-63b753c0d55a)
+
+The web UI requires **no third-party packages** — it uses only the Python
+standard library (`http.server`, `threading`, `webbrowser`).
 
 ## Shell autocompletion
 
@@ -146,8 +270,9 @@ $ python main.py --mode <TAB>
 benchmark    dev    release
 
 $ python main.py --<TAB>
---algorithm  --games  --keep  --mode  --output  --parallel
+--algorithm  --games  --gui  --keep  --mode  --output  --parallel
 --report     --runs   --show  --s3-bucket  --s3-prefix  --s3-public
+--tui        --web
 ```
 
 ## All CLI flags
@@ -166,6 +291,9 @@ $ python main.py --<TAB>
 | `--s3-bucket BUCKET` | — | S3 bucket to upload artifacts and the report to (requires `boto3`) |
 | `--s3-prefix PREFIX` | `results` | Key prefix inside the S3 bucket |
 | `--s3-public` | off | Apply a public-read ACL to uploaded S3 objects |
+| `--tui` | off | Launch the interactive TUI wizard to configure all parameters step-by-step |
+| `--gui` | off | Launch the desktop GUI wizard (tkinter) to configure and start a run |
+| `--web` | off | Open the web UI launcher in the system browser to configure and start a run |
 
 ## Parallel execution
 

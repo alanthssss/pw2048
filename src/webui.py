@@ -1,0 +1,155 @@
+"""Web UI launcher for pw2048.
+
+Starts a local HTTP server on a random free port, opens the launcher form in
+the system browser, and blocks until the user submits the form.  Returns an
+argv list accepted by :func:`main.parse_args`.
+
+No third-party packages are required — the implementation uses only the Python
+standard library (``http.server``, ``threading``, ``webbrowser``,
+``urllib.parse``).
+"""
+
+from __future__ import annotations
+
+import socket
+import threading
+import webbrowser
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
+from urllib.parse import parse_qs
+
+# ---------------------------------------------------------------------------
+# Constants (mirror main.py to avoid circular imports)
+# ---------------------------------------------------------------------------
+
+_DEFAULT_KEEP = 10
+_DEFAULT_GAMES = 20
+_DEFAULT_RUNS = 1
+_DEFAULT_PARALLEL = 1
+
+# ---------------------------------------------------------------------------
+# HTML pages — loaded from src/templates/ so styling lives in dedicated files
+# ---------------------------------------------------------------------------
+
+_TEMPLATES_DIR = Path(__file__).parent / "templates"
+
+_HTML_FORM: str = (_TEMPLATES_DIR / "webui_form.html").read_text(encoding="utf-8")
+_HTML_SUCCESS: str = (_TEMPLATES_DIR / "webui_success.html").read_text(encoding="utf-8")
+
+# ---------------------------------------------------------------------------
+# Pure helper – testable without running the server
+# ---------------------------------------------------------------------------
+
+def _form_to_argv(form: dict[str, list[str]]) -> list[str]:
+    """Convert a ``parse_qs``-style dict from the POST body to an argv list.
+
+    Parameters
+    ----------
+    form:
+        Mapping produced by :func:`urllib.parse.parse_qs` from the raw POST
+        body.  Each key maps to a list of strings.
+
+    Returns
+    -------
+    list[str]
+        argv list suitable for :func:`main.parse_args`.
+    """
+
+    def _get(key: str, default: str = "") -> str:
+        return form.get(key, [default])[0]
+
+    algorithm = _get("algorithm", "random")
+    mode_choice = _get("mode", "custom")
+    output = _get("output", "results") or "results"
+    keep = _get("keep", str(_DEFAULT_KEEP))
+
+    argv: list[str] = [
+        "--algorithm", algorithm,
+        "--output", output,
+        "--keep", keep,
+    ]
+
+    if mode_choice != "custom":
+        argv += ["--mode", mode_choice]
+    else:
+        argv += [
+            "--games", _get("games", str(_DEFAULT_GAMES)),
+            "--runs", _get("runs", str(_DEFAULT_RUNS)),
+            "--parallel", _get("parallel", str(_DEFAULT_PARALLEL)),
+        ]
+
+    if "show" in form:
+        argv.append("--show")
+    if "report" in form:
+        argv.append("--report")
+
+    bucket = _get("s3_bucket").strip()
+    if bucket:
+        argv += ["--s3-bucket", bucket, "--s3-prefix", _get("s3_prefix", "results")]
+        if "s3_public" in form:
+            argv.append("--s3-public")
+
+    return argv
+
+
+# ---------------------------------------------------------------------------
+# Web UI entry-point
+# ---------------------------------------------------------------------------
+
+def run_webui() -> list[str]:
+    """Start a local web server, open the launcher form, and return argv.
+
+    Opens ``http://127.0.0.1:<port>/`` in the system browser and blocks until
+    the user submits the form.
+
+    Returns
+    -------
+    list[str]
+        Argument list that can be passed directly to :func:`main.parse_args`.
+    """
+    result_argv: list[list[str]] = []
+    ready = threading.Event()
+
+    class _Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            self._send(200, "text/html; charset=utf-8", _HTML_FORM.encode())
+
+        def do_POST(self) -> None:
+            length = int(self.headers.get("Content-Length", 0))
+            raw = self.rfile.read(length)
+            try:
+                body = raw.decode("utf-8")
+            except UnicodeDecodeError:
+                body = raw.decode("latin-1")
+            form = parse_qs(body)
+            result_argv[:] = _form_to_argv(form)
+            self._send(200, "text/html; charset=utf-8", _HTML_SUCCESS.encode())
+            ready.set()
+
+        def _send(self, code: int, ctype: str, body: bytes) -> None:
+            self.send_response(code)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *_args: object) -> None:  # suppress request log
+            pass
+
+    # Pick a free ephemeral port
+    with socket.socket() as _s:
+        _s.bind(("127.0.0.1", 0))
+        port = _s.getsockname()[1]
+
+    server = HTTPServer(("127.0.0.1", port), _Handler)
+    srv_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    srv_thread.start()
+
+    url = f"http://127.0.0.1:{port}/"
+    print(f"\n  Web UI → {url}")
+    print("  (fill in the form and click Launch — check your terminal for progress)\n")
+    webbrowser.open(url)
+
+    ready.wait()
+    server.shutdown()
+    return result_argv

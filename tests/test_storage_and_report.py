@@ -106,6 +106,38 @@ class TestPruneLocalResults:
         # 2 old run dirs × (2 files + 1 dir entry) = 6 items
         assert len(deleted) == 6
 
+    def test_keep_default_ten_with_eleven_results(self, tmp_path):
+        """--keep 10 (default) with 11 existing results must keep 10, delete 1.
+
+        This is the canonical regression test for the reported bug:
+        'when 11 results remove the oldest and keep latest 10 instead of only 1'.
+        """
+        for i in range(1, 12):  # 11 runs
+            self._make_run(tmp_path, f"202603{i:02d}_120000")
+        deleted = prune_local_results(tmp_path, keep_n=10)
+        remaining = sorted(d for d in tmp_path.iterdir() if d.is_dir())
+        # Must keep exactly 10 (newest), not 1
+        assert len(remaining) == 10
+        # Oldest (run_20260301) must be gone
+        assert not (tmp_path / "run_20260301_120000").exists()
+        # All 10 newest must remain
+        for i in range(2, 12):
+            assert (tmp_path / f"run_202603{i:02d}_120000").exists()
+
+    def test_keep_ten_with_twenty_results(self, tmp_path):
+        """--keep 10 with 20 existing results must keep the newest 10."""
+        for i in range(1, 21):  # 20 runs
+            self._make_run(tmp_path, f"202603{i:02d}_120000")
+        deleted = prune_local_results(tmp_path, keep_n=10)
+        remaining = sorted(d for d in tmp_path.iterdir() if d.is_dir())
+        assert len(remaining) == 10
+        # Oldest 10 must be gone
+        for i in range(1, 11):
+            assert not (tmp_path / f"run_202603{i:02d}_120000").exists()
+        # Newest 10 must remain
+        for i in range(11, 21):
+            assert (tmp_path / f"run_202603{i:02d}_120000").exists()
+
 
 # ---------------------------------------------------------------------------
 # generate_html_report  (dashboard tests)
@@ -342,6 +374,44 @@ class TestGenerateHtmlReport:
         report = generate_html_report(results_dir, tmp_path / "index.html")
         content = report.read_text(encoding="utf-8")
         assert 'class="rank-1"' in content
+
+    def test_best_tile_stat_card_uses_tile_chip(self, tmp_path):
+        """Best Tile stat card should use a tile-chip with the game colour, not plain text."""
+        results_dir = tmp_path / "results"
+        algo_dir = results_dir / "Random"
+        algo_dir.mkdir(parents=True)
+        run_dir = _make_run_dir(algo_dir, "20260307_120000", n=3)
+        # Overwrite with known best_tile = 512
+        rows = ["run_id,game_index,algorithm,score,best_tile,moves,duration,won,timestamp"]
+        rows.append("run1,1,Random,1000,512,100,1.0,False,2026-03-07T12:00:01Z")
+        rows.append("run1,2,Random,2000,256,200,2.0,False,2026-03-07T12:00:02Z")
+        rows.append("run1,3,Random,3000,128,300,3.0,True,2026-03-07T12:00:03Z")
+        (run_dir / "results.csv").write_text("\n".join(rows))
+
+        report = generate_html_report(results_dir, tmp_path / "index.html")
+        content = report.read_text(encoding="utf-8")
+        # The stat card must contain a tile-chip-lg span with 512's game colour (#edc850)
+        assert "tile-chip-lg" in content
+        assert "#edc850" in content  # 512-tile background from game palette
+        assert ">512<" in content
+
+    def test_hero_best_tile_uses_tile_chip(self, tmp_path):
+        """The hero 'Highest Best Tile' card should use a tile-chip, not a plain number."""
+        results_dir = tmp_path / "results"
+        for algo in ("Random", "Greedy"):
+            d = results_dir / algo
+            d.mkdir(parents=True)
+            run_dir = _make_run_dir(d, "20260307_120000", n=1)
+            rows = ["run_id,game_index,algorithm,score,best_tile,moves,duration,won,timestamp"]
+            rows.append(f"run1,1,{algo},1000,1024,100,1.0,False,2026-03-07T12:00:01Z")
+            (run_dir / "results.csv").write_text("\n".join(rows))
+
+        report = generate_html_report(results_dir, tmp_path / "index.html")
+        content = report.read_text(encoding="utf-8")
+        # Hero section must use a tile-chip-lg with 1024's game colour (#edc53f)
+        assert "tile-chip-lg" in content
+        assert "#edc53f" in content  # 1024-tile background from game palette
+        assert ">1024<" in content
 
 
 # ---------------------------------------------------------------------------
