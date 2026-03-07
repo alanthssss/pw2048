@@ -282,7 +282,7 @@ class TestGenerateHtmlReport:
     # ------------------------------------------------------------------
 
     def test_comparison_section_present_with_multiple_algos(self, tmp_path):
-        """Comparison section must appear when two or more algorithms have results."""
+        """Main Leaderboard must appear when two or more algorithms have results."""
         results_dir = tmp_path / "results"
         for algo in ("Random", "Greedy"):
             d = results_dir / algo
@@ -291,8 +291,8 @@ class TestGenerateHtmlReport:
 
         report = generate_html_report(results_dir, tmp_path / "index.html")
         content = report.read_text(encoding="utf-8")
-        assert "Algorithm Comparison" in content
-        assert 'class="cmp-section"' in content
+        assert "Main Leaderboard" in content
+        assert 'id="leaderboard"' in content
 
     def test_comparison_section_shows_all_algorithm_names(self, tmp_path):
         """Every algorithm name should appear inside the comparison table."""
@@ -308,7 +308,7 @@ class TestGenerateHtmlReport:
         assert "Greedy" in content
 
     def test_comparison_section_absent_for_single_algo(self, tmp_path):
-        """Comparison section must NOT be rendered when only one algorithm exists."""
+        """Old cmp-section class must NOT be rendered; leaderboard should still appear."""
         results_dir = tmp_path / "results"
         algo_dir = results_dir / "Random"
         algo_dir.mkdir(parents=True)
@@ -317,11 +317,12 @@ class TestGenerateHtmlReport:
         report = generate_html_report(results_dir, tmp_path / "index.html")
         content = report.read_text(encoding="utf-8")
         assert 'class="cmp-section"' not in content
+        assert 'id="leaderboard"' in content
 
     def test_comparison_highlights_best_values(self, tmp_path):
-        """Cells with the best metric value should carry the cmp-best CSS class."""
+        """The top-ranked algorithm row should carry the rank-1 CSS class."""
         results_dir = tmp_path / "results"
-        # AlgoB has superior metrics, so its cells should be highlighted
+        # AlgoB has superior metrics, so it should be ranked #1
         algo_a_dir = results_dir / "AlgoA"
         algo_a_dir.mkdir(parents=True)
         run_a = _make_run_dir(algo_a_dir, "20260307_120000", n=1)
@@ -340,7 +341,7 @@ class TestGenerateHtmlReport:
 
         report = generate_html_report(results_dir, tmp_path / "index.html")
         content = report.read_text(encoding="utf-8")
-        assert 'class="cmp-best"' in content
+        assert 'class="rank-1"' in content
 
 
 # ---------------------------------------------------------------------------
