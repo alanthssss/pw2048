@@ -67,6 +67,7 @@ pw2048/
 │   ├── visualize.py           # Matplotlib charts from results
 │   ├── report.py              # Self-contained HTML dashboard generator
 │   ├── storage.py             # S3 upload / prune helpers (lazy boto3 import)
+│   ├── tui.py                 # Interactive TUI wizard (questionary + rich)
 │   └── algorithms/
 │       ├── base.py            # Abstract BaseAlgorithm class
 │       ├── random_algo.py     # Random algorithm
@@ -74,7 +75,8 @@ pw2048/
 │       └── heuristic_algo.py  # Heuristic (empty tiles, monotonicity, corner, merge)
 └── tests/
     ├── test_game_and_algorithms.py
-    └── test_storage_and_report.py
+    ├── test_storage_and_report.py
+    └── test_tui.py
 ```
 
 ## Quick start
@@ -83,6 +85,9 @@ pw2048/
 # Install dependencies
 pip install -r requirements.txt
 python -m playwright install chromium
+
+# Launch the interactive wizard (recommended for first-time users)
+python main.py --tui
 
 # Run 20 games with the random algorithm (default)
 python main.py
@@ -98,6 +103,66 @@ Charts and a CSV with raw game data are saved under `results/<AlgorithmName>/run
 Each run directory contains `results.csv`, `chart.png`, and `metrics.json`.
 All runs for the same algorithm are grouped together, making it easy to compare them side-by-side.
 Use `--output` to change the root directory.
+
+## Interactive TUI wizard
+
+Not a fan of memorising flags?  Run the wizard:
+
+```bash
+python main.py --tui
+```
+
+The wizard walks you through every option step-by-step with arrow-key
+selection menus and validated text prompts:
+
+```
+╭───────────────────────────────────────────────╮
+│  pw2048 – Interactive Launcher                │
+│  Use arrow keys to select, Enter to confirm.  │
+╰───────────────────────────────────────────────╯
+
+? Algorithm:        greedy
+? Run mode:         custom – set games / runs / parallel manually
+? Number of games per run:  50
+? Number of runs:           2
+? Parallel browser workers: 2
+? Output directory:         results
+? Show browser window while playing?  No
+? Keep N most-recent runs per algorithm (0 = keep all):  10
+? Generate HTML report?   Yes
+? Upload results to S3?   No
+
+   Configuration Summary
+┌──────────────┬──────────┐
+│ Algorithm    │ greedy   │
+│ Games / run  │ 50       │
+│ Runs         │ 2        │
+│ Workers      │ 2        │
+│ Output dir   │ results/ │
+│ Show browser │ no       │
+│ Keep N runs  │ 10       │
+│ HTML report  │ yes      │
+│ S3 bucket    │ –        │
+└──────────────┴──────────┘
+
+? Proceed? Yes
+```
+
+Press <kbd>Ctrl-C</kbd> at any prompt, or answer **No** at the final
+confirmation, to abort without running any games.
+
+The wizard covers all parameters available via CLI flags:
+
+| Wizard step | Equivalent flag(s) |
+|---|---|
+| Algorithm | `--algorithm` |
+| Run mode (preset) | `--mode` |
+| Games / runs / workers (custom) | `--games`, `--runs`, `--parallel` |
+| Output directory | `--output` |
+| Show browser | `--show` |
+| Keep N runs | `--keep` |
+| HTML report | `--report` |
+| S3 upload | `--s3-bucket`, `--s3-prefix`, `--s3-public` |
 
 ## Shell autocompletion
 
@@ -148,6 +213,7 @@ benchmark    dev    release
 $ python main.py --<TAB>
 --algorithm  --games  --keep  --mode  --output  --parallel
 --report     --runs   --show  --s3-bucket  --s3-prefix  --s3-public
+--tui
 ```
 
 ## All CLI flags
@@ -166,6 +232,7 @@ $ python main.py --<TAB>
 | `--s3-bucket BUCKET` | — | S3 bucket to upload artifacts and the report to (requires `boto3`) |
 | `--s3-prefix PREFIX` | `results` | Key prefix inside the S3 bucket |
 | `--s3-public` | off | Apply a public-read ACL to uploaded S3 objects |
+| `--tui` | off | Launch the interactive TUI wizard to configure all parameters step-by-step |
 
 ## Parallel execution
 
