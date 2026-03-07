@@ -387,7 +387,11 @@ def _hero_section(rows_data: list[dict]) -> str:
 
 
 def _leaderboard_section(rows_data: list[dict]) -> str:
-    """Build the main leaderboard table sorted by avg_score."""
+    """Build the main leaderboard table sorted by avg_score.
+
+    Only the 8 most important columns are shown so the table fits without
+    horizontal scrolling at normal desktop widths (~1100 px).
+    """
     if not rows_data:
         return ""
 
@@ -398,18 +402,12 @@ def _leaderboard_section(rows_data: list[dict]) -> str:
             "<tr>"
             f"<td{rank_cls}>{i}</td>"
             f"<td><strong>{html.escape(r['name'])}</strong></td>"
-            f"<td>{_algo_type_badge(r['name'])}</td>"
-            f"<td>{_stage_badge(r['stage'])}</td>"
-            f"<td>{r['runs']}</td>"
-            f"<td>{r['total_games']:,}</td>"
-            f"<td><strong>{r['avg_score']:,.0f}</strong></td>"
-            f"<td>{r['median_score']:,.0f}</td>"
-            f"<td>{r['p90_score']:,.0f}</td>"
-            f"<td>{r['max_score']:,.0f}</td>"
+            f"<td class=\"num\"><strong>{r['avg_score']:,.0f}</strong></td>"
+            f"<td class=\"num\">{r['p90_score']:,.0f}</td>"
+            f"<td class=\"num\">{r['max_score']:,.0f}</td>"
             f"<td>{_tile_chip(r['best_tile'])}</td>"
-            f"<td>{r['win_rate']:.1f}%</td>"
-            f"<td>{r['avg_moves']:.0f}</td>"
-            f"<td>{r['avg_duration']:.1f}s</td>"
+            f"<td class=\"num\">{r['win_rate']:.1f}%</td>"
+            f"<td class=\"num\">{r['avg_duration']:.1f}s</td>"
             "</tr>"
         )
 
@@ -418,24 +416,18 @@ def _leaderboard_section(rows_data: list[dict]) -> str:
 <section class="board-section" id="leaderboard">
   <div class="board-header">🏆 Main Leaderboard</div>
   <div class="board-body">
-    <div class="results-table">
+    <div class="main-leaderboard">
       <table>
         <thead>
           <tr>
             <th>#</th>
             <th>Algorithm</th>
-            <th>Type</th>
-            <th>Stage</th>
-            <th>Runs</th>
-            <th>Total Games</th>
-            <th>Avg Score</th>
-            <th>Median</th>
-            <th>P90</th>
-            <th>Max Score</th>
+            <th class="num">Avg Score</th>
+            <th class="num">P90</th>
+            <th class="num">Max Score</th>
             <th>Best Tile</th>
-            <th>Win Rate</th>
-            <th>Avg Moves</th>
-            <th>Avg Duration</th>
+            <th class="num">Win Rate</th>
+            <th class="num">Avg Duration</th>
           </tr>
         </thead>
         <tbody>
@@ -448,22 +440,19 @@ def _leaderboard_section(rows_data: list[dict]) -> str:
 
 
 def _stability_section(rows_data: list[dict]) -> str:
-    """Build the stability board table."""
-    multi_run_rows = [r for r in rows_data if r["runs"] >= 2]
-    if not multi_run_rows:
+    """Build the stability board: Median / P90 / Avg Score / Win Rate per algo."""
+    if not rows_data:
         return ""
 
     rows_html: list[str] = []
-    for r in multi_run_rows:
+    for r in rows_data:
         rows_html.append(
             "<tr>"
             f"<td><strong>{html.escape(r['name'])}</strong></td>"
-            f"<td>{_algo_type_badge(r['name'])}</td>"
-            f"<td>{r['runs']}</td>"
-            f"<td>{r['mean_avg_score']:,.0f}</td>"
-            f"<td>{r['std_avg_score']:,.0f}</td>"
-            f"<td>{r['mean_median_score']:,.0f}</td>"
-            f"<td>{r['mean_p90_score']:,.0f}</td>"
+            f"<td class=\"num\">{r['median_score']:,.0f}</td>"
+            f"<td class=\"num\">{r['p90_score']:,.0f}</td>"
+            f"<td class=\"num\">{r['avg_score']:,.0f}</td>"
+            f"<td class=\"num\">{r['win_rate']:.1f}%</td>"
             "</tr>"
         )
 
@@ -477,12 +466,10 @@ def _stability_section(rows_data: list[dict]) -> str:
         <thead>
           <tr>
             <th>Algorithm</th>
-            <th>Type</th>
-            <th>Runs</th>
-            <th>Mean Avg Score</th>
-            <th>Std Avg Score</th>
-            <th>Mean Median</th>
-            <th>Mean P90</th>
+            <th class="num">Median</th>
+            <th class="num">P90</th>
+            <th class="num">Avg Score</th>
+            <th class="num">Win Rate</th>
           </tr>
         </thead>
         <tbody>
@@ -495,20 +482,20 @@ def _stability_section(rows_data: list[dict]) -> str:
 
 
 def _efficiency_section(rows_data: list[dict]) -> str:
-    """Build the efficiency board table."""
+    """Build the efficiency board: Avg Moves / Avg Duration / Runs / Total Games."""
     if not rows_data:
         return ""
 
     rows_html: list[str] = []
     for r in rows_data:
-        gps = f"{r['games_per_second']:.2f}" if r["games_per_second"] > 0 else "—"
+        moves = f"{r['avg_moves']:.0f}" if r["avg_moves"] >= 1 else "—"
         rows_html.append(
             "<tr>"
             f"<td><strong>{html.escape(r['name'])}</strong></td>"
-            f"<td>{_algo_type_badge(r['name'])}</td>"
-            f"<td>{r['avg_score']:,.0f}</td>"
-            f"<td>{r['avg_duration']:.2f}s</td>"
-            f"<td>{gps}</td>"
+            f"<td class=\"num\">{moves}</td>"
+            f"<td class=\"num\">{r['avg_duration']:.1f}s</td>"
+            f"<td class=\"num\">{r['runs']}</td>"
+            f"<td class=\"num\">{r['total_games']:,}</td>"
             "</tr>"
         )
 
@@ -522,10 +509,10 @@ def _efficiency_section(rows_data: list[dict]) -> str:
         <thead>
           <tr>
             <th>Algorithm</th>
-            <th>Type</th>
-            <th>Avg Score</th>
-            <th>Avg Duration</th>
-            <th>Games / Second</th>
+            <th class="num">Avg Moves</th>
+            <th class="num">Avg Duration</th>
+            <th class="num">Runs</th>
+            <th class="num">Total Games</th>
           </tr>
         </thead>
         <tbody>

@@ -417,8 +417,8 @@ class TestGenerateHtmlReport:
     # Algorithm type badge tests
     # ------------------------------------------------------------------
 
-    def test_leaderboard_has_type_column(self, tmp_path):
-        """Main Leaderboard must include a 'Type' column header."""
+    def test_leaderboard_has_compact_columns(self, tmp_path):
+        """Main Leaderboard must show only the 8 compact columns (no Type, Stage, etc.)."""
         results_dir = tmp_path / "results"
         for algo in ("Random", "Expectimax"):
             d = results_dir / algo
@@ -427,42 +427,45 @@ class TestGenerateHtmlReport:
 
         report = generate_html_report(results_dir, tmp_path / "index.html")
         content = report.read_text(encoding="utf-8")
-        # The leaderboard section must contain a Type header
         assert "Main Leaderboard" in content
-        assert ">Type<" in content
+        # The main-leaderboard wrapper must be used
+        assert "main-leaderboard" in content
+        # Required 8 columns must be present
+        assert ">Avg Score<" in content
+        assert ">P90<" in content
+        assert ">Max Score<" in content
+        assert ">Best Tile<" in content
+        assert ">Win Rate<" in content
+        assert ">Avg Duration<" in content
+        # Secondary columns must NOT be in the leaderboard
+        leaderboard_start = content.index('id="leaderboard"')
+        # Find the end of the leaderboard section (next board-section or end)
+        leaderboard_end = content.find('class="board-section"', leaderboard_start + 1)
+        # None slices to end-of-string; used when the leaderboard is the last section
+        leaderboard_html = content[leaderboard_start:leaderboard_end if leaderboard_end != -1 else len(content)]
+        assert ">Stage<" not in leaderboard_html
+        assert ">Median<" not in leaderboard_html
+        assert ">Avg Moves<" not in leaderboard_html
+        assert ">Total Games<" not in leaderboard_html
 
     def test_baseline_algorithms_tagged_as_baseline(self, tmp_path):
-        """Random, Greedy, Heuristic must carry the Baseline type badge."""
-        results_dir = tmp_path / "results"
-        for algo in ("Random", "Greedy", "Heuristic"):
-            d = results_dir / algo
-            d.mkdir(parents=True)
-            self._make_csv(d, "20260307_120000")
-
-        report = generate_html_report(results_dir, tmp_path / "index.html")
-        content = report.read_text(encoding="utf-8")
-        assert "algo-type-baseline" in content
-        assert ">Baseline<" in content
-        # No Search algorithms present — the Search badge must not be rendered
-        assert ">Search<" not in content
+        """Baseline type badge helper must categorise baseline algorithms correctly."""
+        from src.report import _algo_type_badge
+        badge = _algo_type_badge("Random")
+        assert "algo-type-baseline" in badge
+        assert "Baseline" in badge
+        assert "algo-type-search" not in badge
 
     def test_search_algorithms_tagged_as_search(self, tmp_path):
-        """Expectimax and MCTS must carry the Search type badge."""
-        results_dir = tmp_path / "results"
-        for algo in ("Expectimax", "MCTS"):
-            d = results_dir / algo
-            d.mkdir(parents=True)
-            self._make_csv(d, "20260307_120000")
-
-        report = generate_html_report(results_dir, tmp_path / "index.html")
-        content = report.read_text(encoding="utf-8")
-        assert "algo-type-search" in content
-        assert ">Search<" in content
-        # No Baseline algorithms present — the Baseline badge must not be rendered
-        assert ">Baseline<" not in content
+        """Search type badge helper must categorise search algorithms correctly."""
+        from src.report import _algo_type_badge
+        badge = _algo_type_badge("Expectimax")
+        assert "algo-type-search" in badge
+        assert "Search" in badge
+        assert "algo-type-baseline" not in badge
 
     def test_mixed_algorithms_show_both_type_badges(self, tmp_path):
-        """When both Baseline and Search algorithms are present, both badges appear."""
+        """When both Baseline and Search algorithms are present, both CSS classes are present."""
         results_dir = tmp_path / "results"
         for algo in ("Random", "Expectimax"):
             d = results_dir / algo
@@ -471,13 +474,12 @@ class TestGenerateHtmlReport:
 
         report = generate_html_report(results_dir, tmp_path / "index.html")
         content = report.read_text(encoding="utf-8")
+        # Both badge CSS classes must be defined in the stylesheet
         assert "algo-type-baseline" in content
         assert "algo-type-search" in content
-        assert "Baseline" in content
-        assert "Search" in content
 
-    def test_efficiency_board_has_type_column(self, tmp_path):
-        """Efficiency Board must include a 'Type' column header."""
+    def test_efficiency_board_has_correct_columns(self, tmp_path):
+        """Efficiency Board must show Avg Moves, Avg Duration, Runs, Total Games columns."""
         results_dir = tmp_path / "results"
         d = results_dir / "Random"
         d.mkdir(parents=True)
@@ -486,7 +488,10 @@ class TestGenerateHtmlReport:
         report = generate_html_report(results_dir, tmp_path / "index.html")
         content = report.read_text(encoding="utf-8")
         assert "Efficiency Board" in content
-        assert ">Type<" in content
+        assert ">Avg Moves<" in content
+        assert ">Avg Duration<" in content
+        assert ">Runs<" in content
+        assert ">Total Games<" in content
 
     def test_type_badge_helper_categorises_correctly(self):
         """Unit test for the _algo_category helper."""
