@@ -32,11 +32,13 @@ import io
 import json
 from datetime import datetime, timezone
 from pathlib import Path
+from string import Template
 
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 import pandas as pd
 
+_TEMPLATES_DIR = Path(__file__).parent / "templates"
 
 # ---------------------------------------------------------------------------
 # 2048-inspired colour palette
@@ -62,443 +64,11 @@ _PALETTE = {
     "section_border": "#eee4da",
 }
 
-_CSS = """\
-*, *::before, *::after {{ box-sizing: border-box; margin: 0; padding: 0; }}
-body {{
-    font-family: "Clear Sans", "Helvetica Neue", Arial, sans-serif;
-    background: {bg};
-    color: {text_dark};
-    line-height: 1.5;
-}}
-
-/* ── Header ────────────────────────────────────────────────────────── */
-header {{
-    background: {header_bg};
-    color: {header_fg};
-    padding: 24px 32px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    flex-wrap: wrap;
-    gap: 8px;
-}}
-header h1 {{ font-size: 2rem; font-weight: 700; letter-spacing: -0.5px; }}
-header .meta {{ font-size: 0.85rem; opacity: 0.85; text-align: right; }}
-
-/* ── Sticky algo nav bar ────────────────────────────────────────────── */
-.algo-nav {{
-    background: {nav_bg};
-    position: sticky;
-    top: 0;
-    z-index: 100;
-    padding: 10px 24px;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    flex-wrap: wrap;
-    border-bottom: 2px solid rgba(0,0,0,.08);
-}}
-.algo-nav .nav-label {{
-    font-size: 0.72rem;
-    text-transform: uppercase;
-    letter-spacing: .1em;
-    color: {nav_fg};
-    opacity: .7;
-    margin-right: 4px;
-    flex-shrink: 0;
-}}
-.algo-nav a {{
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    background: rgba(255,255,255,.18);
-    color: {nav_fg};
-    text-decoration: none;
-    padding: 5px 14px;
-    border-radius: 20px;
-    font-size: 0.85rem;
-    font-weight: 600;
-    transition: background .15s;
-}}
-.algo-nav a:hover {{ background: rgba(255,255,255,.32); }}
-.algo-nav a .nav-dot {{
-    width: 8px; height: 8px;
-    background: {nav_active};
-    border-radius: 50%;
-    display: inline-block;
-}}
-
-/* ── Main layout ────────────────────────────────────────────────────── */
-main {{ max-width: 1100px; margin: 0 auto; padding: 32px 16px 64px; }}
-.algo-section {{
-    background: white;
-    border-radius: 12px;
-    box-shadow: 0 2px 12px rgba(0,0,0,.08);
-    margin-bottom: 48px;
-    overflow: hidden;
-    scroll-margin-top: 56px;  /* account for sticky nav */
-}}
-.algo-section-header {{
-    background: {header_bg};
-    color: {header_fg};
-    padding: 14px 24px;
-    font-size: 1.3rem;
-    font-weight: 700;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-}}
-.algo-section-body {{ padding: 24px; }}
-
-/* ── Aggregate stats cards ─────────────────────────────────────────── */
-.stats-grid {{
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-    gap: 14px;
-    margin-bottom: 28px;
-}}
-.stat-card {{
-    background: {card_bg};
-    border-radius: 8px;
-    padding: 14px 18px;
-    text-align: center;
-}}
-.stat-card .stat-label {{
-    font-size: 0.70rem;
-    text-transform: uppercase;
-    letter-spacing: .08em;
-    opacity: .7;
-    margin-bottom: 4px;
-}}
-.stat-card .stat-value {{
-    font-size: 1.55rem;
-    font-weight: 700;
-    color: {card_accent};
-}}
-
-/* ── Run history section title ──────────────────────────────────────── */
-.runs-heading {{
-    font-size: 0.88rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: .08em;
-    color: {text_dark};
-    opacity: .65;
-    margin-bottom: 12px;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-}}
-.runs-heading::after {{
-    content: "";
-    flex: 1;
-    height: 1px;
-    background: {section_border};
-}}
-
-/* ── Run accordion (details/summary) ───────────────────────────────── */
-.run-item {{
-    border: 1px solid {details_border};
-    border-radius: 8px;
-    margin-bottom: 8px;
-    overflow: hidden;
-}}
-.run-item[open] {{
-    border-color: {card_accent};
-    box-shadow: 0 0 0 2px rgba(245,149,99,.2);
-}}
-.run-summary {{
-    list-style: none;
-    padding: 12px 16px;
-    background: {run_summary_bg};
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 8px;
-    user-select: none;
-}}
-.run-item[open] > .run-summary {{
-    background: {run_latest_bg};
-    border-bottom: 1px solid {details_border};
-}}
-.run-summary:hover {{
-    background: {run_summary_hover};
-}}
-.run-summary::-webkit-details-marker {{ display: none; }}
-.run-arrow {{
-    font-size: 0.75rem;
-    transition: transform .2s;
-    flex-shrink: 0;
-    width: 16px;
-    text-align: center;
-}}
-.run-item[open] .run-arrow {{ transform: rotate(90deg); }}
-.run-ts {{
-    font-size: 0.92rem;
-    font-weight: 700;
-    color: {text_dark};
-    flex-shrink: 0;
-}}
-.run-chips {{
-    display: flex;
-    flex-wrap: wrap;
-    gap: 5px;
-    margin-left: auto;
-}}
-.chip {{
-    display: inline-block;
-    padding: 2px 9px;
-    border-radius: 12px;
-    font-size: 0.75rem;
-    font-weight: 600;
-    background: rgba(119,110,101,.12);
-    color: {text_dark};
-}}
-.chip-latest {{
-    background: {card_accent};
-    color: white;
-}}
-
-/* ── Expanded run body ──────────────────────────────────────────────── */
-.run-body {{ padding: 20px 20px 16px; }}
-.chart-wrap {{ text-align: center; margin-bottom: 20px; }}
-.chart-wrap img {{
-    max-width: 100%;
-    border-radius: 8px;
-    box-shadow: 0 1px 6px rgba(0,0,0,.12);
-}}
-
-/* ── Per-game results table ─────────────────────────────────────────── */
-.results-table {{ overflow-x: auto; }}
-table {{
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 0.87rem;
-}}
-thead th {{
-    background: {header_bg};
-    color: {header_fg};
-    padding: 9px 13px;
-    text-align: left;
-    font-weight: 600;
-    white-space: nowrap;
-}}
-tbody tr:nth-child(even) {{ background: {table_even}; }}
-tbody td {{ padding: 8px 13px; }}
-.badge {{
-    display: inline-block;
-    padding: 2px 8px;
-    border-radius: 4px;
-    font-size: 0.76rem;
-    font-weight: 700;
-    color: white;
-}}
-.badge-win  {{ background: {win_badge};  }}
-.badge-lose {{ background: {lose_badge}; }}
-.tile-chip {{
-    display: inline-block;
-    min-width: 46px;
-    padding: 2px 7px;
-    border-radius: 4px;
-    text-align: center;
-    font-weight: 700;
-    font-size: 0.83rem;
-}}
-
-/* ── Algorithm comparison table ─────────────────────────────────── */
-.cmp-section {{
-    background: white;
-    border-radius: 12px;
-    box-shadow: 0 2px 12px rgba(0,0,0,.08);
-    margin-bottom: 48px;
-    overflow: hidden;
-}}
-.cmp-header {{
-    background: {header_bg};
-    color: {header_fg};
-    padding: 14px 24px;
-    font-size: 1.3rem;
-    font-weight: 700;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-}}
-.cmp-body {{ padding: 24px; }}
-.cmp-algo {{
-    font-weight: 700;
-    color: {text_dark};
-}}
-.cmp-best {{
-    font-weight: 700;
-    color: {card_accent};
-}}
-
-/* ── Inline summary charts ──────────────────────────────────────── */
-.summary-charts {{
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-    gap: 16px;
-    margin-bottom: 28px;
-}}
-.summary-chart-card {{
-    background: {card_bg};
-    border-radius: 8px;
-    padding: 12px;
-    text-align: center;
-}}
-.summary-chart-card .chart-title {{
-    font-size: 0.78rem;
-    text-transform: uppercase;
-    letter-spacing: .07em;
-    opacity: .7;
-    margin-bottom: 8px;
-}}
-.summary-chart-card img {{
-    max-width: 100%;
-    border-radius: 4px;
-}}
-
-/* ── Footer ────────────────────────────────────────────────────────── */
-footer {{
-    text-align: center;
-    font-size: 0.8rem;
-    color: {text_dark};
-    opacity: 0.55;
-    padding: 16px;
-    border-top: 1px solid {section_border};
-    margin-top: 8px;
-}}
-
-/* ── Hero summary cards ──────────────────────────────────────────── */
-.hero-section {{
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-    gap: 16px;
-    margin-bottom: 40px;
-}}
-.hero-card {{
-    background: white;
-    border-radius: 12px;
-    box-shadow: 0 2px 12px rgba(0,0,0,.08);
-    padding: 20px 24px;
-    text-align: center;
-    border-top: 4px solid {card_accent};
-}}
-.hero-card .hero-label {{
-    font-size: 0.72rem;
-    text-transform: uppercase;
-    letter-spacing: .1em;
-    opacity: .65;
-    margin-bottom: 8px;
-}}
-.hero-card .hero-value {{
-    font-size: 1.8rem;
-    font-weight: 700;
-    color: {card_accent};
-}}
-.hero-card .hero-sub {{
-    font-size: 0.8rem;
-    opacity: .7;
-    margin-top: 4px;
-}}
-
-/* ── Board sections (leaderboard / stability / efficiency) ─────────── */
-.board-section {{
-    background: white;
-    border-radius: 12px;
-    box-shadow: 0 2px 12px rgba(0,0,0,.08);
-    margin-bottom: 48px;
-    overflow: hidden;
-    scroll-margin-top: 56px;  /* account for sticky nav */
-}}
-.board-header {{
-    background: {header_bg};
-    color: {header_fg};
-    padding: 14px 24px;
-    font-size: 1.3rem;
-    font-weight: 700;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-}}
-.board-body {{ padding: 24px; }}
-
-/* ── Stage badge ─────────────────────────────────────────────────── */
-.stage-badge {{
-    display: inline-block;
-    padding: 2px 8px;
-    border-radius: 4px;
-    font-size: 0.72rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: .05em;
-}}
-.stage-benchmark {{ background: {card_accent}; color: white; }}
-.stage-release   {{ background: {win_badge}; color: white; }}
-.stage-dev       {{ background: {nav_bg}; color: {nav_fg}; }}
-.stage-custom    {{ background: {card_bg}; color: {text_dark}; }}
-
-/* ── Rank cells ──────────────────────────────────────────────────── */
-.rank-1 {{ font-weight: 700; color: {card_accent}; }}
-.rank-2 {{ font-weight: 700; color: {header_bg}; }}
-.rank-3 {{ font-weight: 600; color: {text_dark}; }}
-
-/* ── Run metadata box ────────────────────────────────────────────── */
-.run-meta-box {{
-    background: {card_bg};
-    border-radius: 8px;
-    padding: 12px 16px;
-    margin-bottom: 16px;
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-    gap: 8px 16px;
-    font-size: 0.82rem;
-}}
-.run-meta-item .meta-key {{
-    font-size: 0.68rem;
-    text-transform: uppercase;
-    letter-spacing: .08em;
-    opacity: .6;
-    margin-bottom: 2px;
-}}
-.run-meta-item .meta-val {{
-    font-weight: 600;
-    color: {text_dark};
-    word-break: break-all;
-}}
-
-/* ── Global comparison charts grid ──────────────────────────────── */
-.global-charts-grid {{
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-    gap: 16px;
-}}
-.global-chart-card {{
-    background: {card_bg};
-    border-radius: 8px;
-    padding: 12px;
-    text-align: center;
-}}
-.global-chart-card .chart-title {{
-    font-size: 0.78rem;
-    text-transform: uppercase;
-    letter-spacing: .07em;
-    opacity: .7;
-    margin-bottom: 8px;
-}}
-.global-chart-card img {{
-    max-width: 100%;
-    border-radius: 4px;
-}}
-
-/* ── Responsive ────────────────────────────────────────────────────── */
-@media (max-width: 600px) {{
-    header h1 {{ font-size: 1.35rem; }}
-    .stat-card .stat-value {{ font-size: 1.2rem; }}
-    .run-chips {{ display: none; }}
-}}
-""".format(**_PALETTE)
+# CSS is stored in src/templates/report.css and uses $variable substitution
+# for palette colours (string.Template) so the file contains plain CSS syntax.
+_CSS: str = Template(
+    (_TEMPLATES_DIR / "report.css").read_text(encoding="utf-8")
+).substitute(**_PALETTE)
 
 
 # Map tile values to background colours (matching the game's palette).
@@ -521,6 +91,16 @@ def _tile_chip(value: int) -> str:
     bg, fg = _TILE_COLORS.get(value, ("#cdc1b4", "#776e65"))
     return (
         f'<span class="tile-chip" style="background:{bg};color:{fg}">'
+        f"{value}</span>"
+    )
+
+
+def _tile_chip_lg(value: int) -> str:
+    """Like :func:`_tile_chip` but uses the ``tile-chip-lg`` CSS modifier class
+    for larger display in stat cards and hero cards."""
+    bg, fg = _TILE_COLORS.get(value, ("#cdc1b4", "#776e65"))
+    return (
+        f'<span class="tile-chip tile-chip-lg" style="background:{bg};color:{fg}">'
         f"{value}</span>"
     )
 
@@ -767,7 +347,7 @@ def _hero_section(rows_data: list[dict]) -> str:
 
     cards = [
         _card("Best Avg Score", f"{best_avg_row['avg_score']:,.0f}", best_avg_row["name"]),
-        _card("Highest Best Tile", str(best_tile_row["best_tile"]), best_tile_row["name"]),
+        _card("Highest Best Tile", _tile_chip_lg(best_tile_row["best_tile"]), best_tile_row["name"]),
     ]
     if most_stable:
         cards.append(
@@ -1202,9 +782,10 @@ def _stats_grid(df: pd.DataFrame) -> str:
     """Aggregate stats cards computed across *all* stored runs."""
     avg_score = df["score"].mean()
     best_score = df["score"].max()
-    best_tile = df["best_tile"].max()
+    best_tile = int(df["best_tile"].max())
     win_rate = df["won"].mean() * 100
     n_games = len(df)
+    tile_chip_html = _tile_chip_lg(best_tile)
     return f"""\
 <div class="stats-grid">
   <div class="stat-card">
@@ -1221,7 +802,7 @@ def _stats_grid(df: pd.DataFrame) -> str:
   </div>
   <div class="stat-card">
     <div class="stat-label">Best Tile</div>
-    <div class="stat-value">{best_tile}</div>
+    <div class="stat-value">{tile_chip_html}</div>
   </div>
   <div class="stat-card">
     <div class="stat-label">Win Rate</div>

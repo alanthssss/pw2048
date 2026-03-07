@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>pw2048 &#8211; Web Launcher</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: "Clear Sans", "Helvetica Neue", Arial, sans-serif;
+      background: #faf8ef;
+      color: #776e65;
+      min-height: 100vh;
+      display: flex;
+      align-items: flex-start;
+      justify-content: center;
+      padding: 32px 16px;
+    }
+    .card {
+      background: white;
+      border-radius: 12px;
+      box-shadow: 0 2px 12px rgba(0,0,0,.1);
+      width: 100%;
+      max-width: 580px;
+      overflow: hidden;
+    }
+    .card-header {
+      background: #bbada0;
+      color: #f9f6f2;
+      padding: 20px 28px;
+    }
+    .card-header h1 { font-size: 1.8rem; font-weight: 700; }
+    .card-header .subtitle { font-size: 0.85rem; opacity: 0.85; margin-top: 4px; }
+    .card-body { padding: 24px 28px; }
+    .field { margin-bottom: 14px; }
+    label {
+      display: block;
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      color: #776e65;
+      opacity: .75;
+      margin-bottom: 5px;
+    }
+    input[type="text"],
+    input[type="number"],
+    select {
+      width: 100%;
+      padding: 8px 12px;
+      background: #faf8ef;
+      border: 1px solid #bbada0;
+      border-radius: 6px;
+      color: #776e65;
+      font-size: 0.9375rem;
+      font-family: inherit;
+      outline: none;
+      transition: border-color 0.15s, box-shadow 0.15s;
+    }
+    input:focus, select:focus {
+      border-color: #f59563;
+      box-shadow: 0 0 0 2px rgba(245,149,99,.18);
+    }
+    .three-col { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+    .check-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+    .check-row input[type="checkbox"] {
+      width: 16px; height: 16px;
+      accent-color: #f59563;
+      cursor: pointer;
+    }
+    .check-row label {
+      margin-bottom: 0;
+      text-transform: none;
+      letter-spacing: 0;
+      opacity: 1;
+      cursor: pointer;
+    }
+    .mode-group { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
+    .mode-btn {
+      padding: 5px 14px;
+      border: 1px solid #bbada0;
+      border-radius: 20px;
+      background: #faf8ef;
+      color: #776e65;
+      cursor: pointer;
+      font-size: 0.875rem;
+      font-family: inherit;
+      transition: all 0.15s;
+    }
+    .mode-btn:hover { border-color: #f59563; }
+    .mode-btn.active {
+      background: #f59563;
+      border-color: #f59563;
+      color: #f9f6f2;
+      font-weight: 700;
+    }
+    .section {
+      border-top: 1px solid #eee4da;
+      margin-top: 18px;
+      padding-top: 14px;
+    }
+    .section-title {
+      font-size: 0.68rem;
+      text-transform: uppercase;
+      letter-spacing: .1em;
+      color: #776e65;
+      opacity: .6;
+      margin-bottom: 12px;
+    }
+    .btn-row { display: flex; justify-content: flex-end; gap: 12px; margin-top: 24px; }
+    .btn {
+      padding: 10px 22px;
+      border-radius: 6px;
+      border: none;
+      cursor: pointer;
+      font-size: 0.9375rem;
+      font-weight: 700;
+      font-family: inherit;
+      transition: background 0.15s;
+    }
+    .btn-secondary { background: #cdc1b4; color: #f9f6f2; }
+    .btn-secondary:hover { background: #bbada0; }
+    .btn-primary { background: #f59563; color: #f9f6f2; }
+    .btn-primary:hover { background: #f67c5f; }
+  </style>
+</head>
+<body>
+<div class="card">
+  <div class="card-header">
+    <h1>&#127918; pw2048</h1>
+    <p class="subtitle">Web Launcher &#8212; configure your run and click Launch</p>
+  </div>
+  <div class="card-body">
+
+  <form method="post" action="/">
+
+    <!-- Algorithm -->
+    <div class="field">
+      <label for="algorithm">Algorithm</label>
+      <select id="algorithm" name="algorithm">
+        <option value="random">random</option>
+        <option value="greedy">greedy</option>
+        <option value="heuristic">heuristic</option>
+      </select>
+    </div>
+
+    <!-- Mode -->
+    <div class="field">
+      <label>Run mode</label>
+      <div class="mode-group">
+        <button type="button" class="mode-btn active" data-mode="custom"
+                onclick="selectMode(this)">custom</button>
+        <button type="button" class="mode-btn" data-mode="dev"
+                onclick="selectMode(this)">dev</button>
+        <button type="button" class="mode-btn" data-mode="release"
+                onclick="selectMode(this)">release</button>
+        <button type="button" class="mode-btn" data-mode="benchmark"
+                onclick="selectMode(this)">benchmark</button>
+      </div>
+      <input type="hidden" name="mode" id="mode-input" value="custom">
+    </div>
+
+    <!-- Custom fields -->
+    <div id="custom-fields">
+      <div class="three-col">
+        <div class="field">
+          <label for="games">Games / run</label>
+          <input type="number" id="games" name="games" value="20" min="1">
+        </div>
+        <div class="field">
+          <label for="runs">Runs</label>
+          <input type="number" id="runs" name="runs" value="1" min="1">
+        </div>
+        <div class="field">
+          <label for="parallel">Workers</label>
+          <input type="number" id="parallel" name="parallel" value="1" min="1">
+        </div>
+      </div>
+    </div>
+
+    <!-- Output -->
+    <div class="section">
+      <div class="section-title">Output</div>
+      <div class="three-col">
+        <div class="field" style="grid-column: span 2">
+          <label for="output">Directory</label>
+          <input type="text" id="output" name="output" value="results">
+        </div>
+        <div class="field">
+          <label for="keep">Keep N runs</label>
+          <input type="number" id="keep" name="keep" value="10" min="0">
+        </div>
+      </div>
+    </div>
+
+    <!-- Options -->
+    <div class="section">
+      <div class="section-title">Options</div>
+      <div class="check-row">
+        <input type="checkbox" id="show" name="show">
+        <label for="show">Show browser window while playing</label>
+      </div>
+      <div class="check-row">
+        <input type="checkbox" id="report" name="report">
+        <label for="report">Generate HTML report after run</label>
+      </div>
+    </div>
+
+    <!-- S3 -->
+    <div class="section">
+      <div class="section-title">S3 (optional)</div>
+      <div class="field">
+        <label for="s3_bucket">Bucket</label>
+        <input type="text" id="s3_bucket" name="s3_bucket"
+               placeholder="leave blank to skip">
+      </div>
+      <div class="field">
+        <label for="s3_prefix">Key prefix</label>
+        <input type="text" id="s3_prefix" name="s3_prefix" value="results">
+      </div>
+      <div class="check-row">
+        <input type="checkbox" id="s3_public" name="s3_public">
+        <label for="s3_public">Apply public-read ACL to uploaded objects</label>
+      </div>
+    </div>
+
+    <div class="btn-row">
+      <button type="reset" class="btn btn-secondary">Reset</button>
+      <button type="submit" class="btn btn-primary">Launch &#9654;</button>
+    </div>
+
+  </form>
+  </div>
+</div>
+
+<script>
+  function selectMode(btn) {
+    document.querySelectorAll('.mode-btn').forEach(function(b) {
+      b.classList.remove('active');
+    });
+    btn.classList.add('active');
+    var mode = btn.getAttribute('data-mode');
+    document.getElementById('mode-input').value = mode;
+    document.getElementById('custom-fields').style.display =
+      mode === 'custom' ? '' : 'none';
+  }
+</script>
+</body>
+</html>

@@ -375,6 +375,44 @@ class TestGenerateHtmlReport:
         content = report.read_text(encoding="utf-8")
         assert 'class="rank-1"' in content
 
+    def test_best_tile_stat_card_uses_tile_chip(self, tmp_path):
+        """Best Tile stat card should use a tile-chip with the game colour, not plain text."""
+        results_dir = tmp_path / "results"
+        algo_dir = results_dir / "Random"
+        algo_dir.mkdir(parents=True)
+        run_dir = _make_run_dir(algo_dir, "20260307_120000", n=3)
+        # Overwrite with known best_tile = 512
+        rows = ["run_id,game_index,algorithm,score,best_tile,moves,duration,won,timestamp"]
+        rows.append("run1,1,Random,1000,512,100,1.0,False,2026-03-07T12:00:01Z")
+        rows.append("run1,2,Random,2000,256,200,2.0,False,2026-03-07T12:00:02Z")
+        rows.append("run1,3,Random,3000,128,300,3.0,True,2026-03-07T12:00:03Z")
+        (run_dir / "results.csv").write_text("\n".join(rows))
+
+        report = generate_html_report(results_dir, tmp_path / "index.html")
+        content = report.read_text(encoding="utf-8")
+        # The stat card must contain a tile-chip-lg span with 512's game colour (#edc850)
+        assert "tile-chip-lg" in content
+        assert "#edc850" in content  # 512-tile background from game palette
+        assert ">512<" in content
+
+    def test_hero_best_tile_uses_tile_chip(self, tmp_path):
+        """The hero 'Highest Best Tile' card should use a tile-chip, not a plain number."""
+        results_dir = tmp_path / "results"
+        for algo in ("Random", "Greedy"):
+            d = results_dir / algo
+            d.mkdir(parents=True)
+            run_dir = _make_run_dir(d, "20260307_120000", n=1)
+            rows = ["run_id,game_index,algorithm,score,best_tile,moves,duration,won,timestamp"]
+            rows.append(f"run1,1,{algo},1000,1024,100,1.0,False,2026-03-07T12:00:01Z")
+            (run_dir / "results.csv").write_text("\n".join(rows))
+
+        report = generate_html_report(results_dir, tmp_path / "index.html")
+        content = report.read_text(encoding="utf-8")
+        # Hero section must use a tile-chip-lg with 1024's game colour (#edc53f)
+        assert "tile-chip-lg" in content
+        assert "#edc53f" in content  # 1024-tile background from game palette
+        assert ">1024<" in content
+
 
 # ---------------------------------------------------------------------------
 # --parallel argument parsing

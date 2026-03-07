@@ -286,3 +286,25 @@ class TestWebUIServer:
 
         for algo in ("random", "greedy", "heuristic"):
             assert algo in _HTML_FORM
+
+    def test_html_form_uses_2048_palette(self):
+        """The launch form should use the 2048-inspired palette, not the old dark theme."""
+        from src.webui import _HTML_FORM
+
+        # Must contain the 2048 tan background colour
+        assert "#faf8ef" in _HTML_FORM
+        # Must contain the 2048 brownish-tan header colour
+        assert "#bbada0" in _HTML_FORM
+        # Must contain the 2048 orange accent colour
+        assert "#f59563" in _HTML_FORM
+        # Must NOT use the old dark purple background
+        assert "#1e1e2e" not in _HTML_FORM
+
+    def test_html_success_uses_2048_palette(self):
+        """The success page should use the 2048-inspired palette."""
+        from src.webui import _HTML_SUCCESS
+
+        assert "#faf8ef" in _HTML_SUCCESS
+        assert "#bbada0" in _HTML_SUCCESS
+        assert "#1e1e2e" not in _HTML_SUCCESS
+
