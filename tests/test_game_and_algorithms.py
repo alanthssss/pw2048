@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pathlib
-import re
 import pytest
 from playwright.sync_api import sync_playwright
 
@@ -14,28 +13,25 @@ from src.game import Game2048, DIRECTIONS
 
 GAME_URL = (pathlib.Path(__file__).parent.parent / "game.html").as_uri()
 
-_TIMESTAMP_RE = re.compile(r"^\d{8}_\d{6}$")
 
 
 class TestBuildOutputDir:
-    def test_explicit_timestamp_produces_expected_path(self):
-        result = build_output_dir("results", "Random", timestamp="20260307_120000")
-        assert result == pathlib.Path("results") / "20260307_120000" / "Random"
-
-    def test_auto_timestamp_has_correct_format(self):
+    def test_returns_base_plus_algorithm_name(self):
         result = build_output_dir("results", "Random")
-        timestamp_part = result.parts[-2]
-        assert _TIMESTAMP_RE.match(timestamp_part), (
-            f"Expected YYYYMMDD_HHMMSS, got {timestamp_part!r}"
-        )
+        assert result == pathlib.Path("results") / "Random"
 
     def test_algorithm_name_is_last_segment(self):
-        result = build_output_dir("results", "MyAlgo", timestamp="20260101_000000")
+        result = build_output_dir("results", "MyAlgo")
         assert result.name == "MyAlgo"
 
     def test_custom_base_directory(self):
-        result = build_output_dir("/tmp/custom", "Random", timestamp="20260307_120000")
-        assert result == pathlib.Path("/tmp/custom") / "20260307_120000" / "Random"
+        result = build_output_dir("/tmp/custom", "Random")
+        assert result == pathlib.Path("/tmp/custom") / "Random"
+
+    def test_different_algorithm_names_produce_different_dirs(self):
+        dir_a = build_output_dir("results", "AlgoA")
+        dir_b = build_output_dir("results", "AlgoB")
+        assert dir_a != dir_b
 
 
 @pytest.fixture(scope="module")

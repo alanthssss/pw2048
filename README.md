@@ -42,8 +42,9 @@ python main.py --games 50 --output my_results
 python main.py --games 5 --show
 ```
 
-Charts and a CSV with raw game data are saved under `results/<timestamp>/<algorithm>/` (e.g. `results/20260307_120000/Random/`).  
-Use `--output` to change the root directory; the timestamp and algorithm subdirectories are always appended automatically.
+Charts and a CSV with raw game data are saved under `results/<algorithm>/<timestamp>.{png,csv}` (e.g. `results/Random/20260307_120000.png`).  
+All runs for the same algorithm are grouped together, making it easy to compare them side-by-side.  
+Use `--output` to change the root directory.
 
 ## Example output
 

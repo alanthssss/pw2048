@@ -9,7 +9,11 @@ import matplotlib.ticker as ticker
 import pandas as pd
 
 
-def plot_results(df: pd.DataFrame, output_dir: str | Path = "results") -> None:
+def plot_results(
+    df: pd.DataFrame,
+    output_dir: str | Path = "results",
+    output_stem: str | None = None,
+) -> None:
     """
     Save a set of charts summarizing game results to *output_dir*.
 
@@ -19,12 +23,17 @@ def plot_results(df: pd.DataFrame, output_dir: str | Path = "results") -> None:
         DataFrame returned by :func:`src.runner.run_games`.
     output_dir : str or Path
         Directory where PNG files will be written (created if needed).
+    output_stem : str, optional
+        Filename stem (without extension) for the saved chart.
+        Defaults to ``results_<algorithm_lowercase>`` when *None*.
     """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     algo = df["algorithm"].iloc[0] if not df.empty else "Unknown"
     n = len(df)
+    if output_stem is None:
+        output_stem = f"results_{algo.lower()}"
 
     fig, axes = plt.subplots(2, 2, figsize=(12, 9))
     fig.suptitle(f"2048 Results — {algo} Algorithm  (n={n})", fontsize=15, fontweight="bold")
@@ -74,7 +83,7 @@ def plot_results(df: pd.DataFrame, output_dir: str | Path = "results") -> None:
     ax.legend()
 
     plt.tight_layout()
-    out_path = output_dir / f"results_{algo.lower()}.png"
+    out_path = output_dir / f"{output_stem}.png"
     plt.savefig(out_path, dpi=120)
     plt.close(fig)
     print(f"Chart saved → {out_path}")
