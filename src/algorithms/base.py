@@ -16,6 +16,9 @@ class BaseAlgorithm(ABC):
     #: Human-readable name shown in reports and charts.
     name: str = "Base"
 
+    #: Version string included in per-run metadata.
+    version: str = "v1"
+
     @abstractmethod
     def choose_move(self, board: List[List[int]]) -> str:
         """

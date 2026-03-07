@@ -28,9 +28,12 @@ from __future__ import annotations
 
 import base64
 import html
+import io
 from datetime import datetime, timezone
 from pathlib import Path
 
+import matplotlib.pyplot as plt
+import matplotlib.ticker as ticker
 import pandas as pd
 
 
@@ -330,6 +333,31 @@ tbody td {{ padding: 8px 13px; }}
     color: {card_accent};
 }}
 
+/* ── Inline summary charts ──────────────────────────────────────── */
+.summary-charts {{
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 16px;
+    margin-bottom: 28px;
+}}
+.summary-chart-card {{
+    background: {card_bg};
+    border-radius: 8px;
+    padding: 12px;
+    text-align: center;
+}}
+.summary-chart-card .chart-title {{
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: .07em;
+    opacity: .7;
+    margin-bottom: 8px;
+}}
+.summary-chart-card img {{
+    max-width: 100%;
+    border-radius: 4px;
+}}
+
 /* ── Footer ────────────────────────────────────────────────────────── */
 footer {{
     text-align: center;
@@ -380,6 +408,105 @@ def _embed_image(path: Path) -> str | None:
         return None
     b64 = base64.b64encode(path.read_bytes()).decode()
     return f"data:image/png;base64,{b64}"
+
+
+def _fig_to_data_uri(fig: plt.Figure) -> str:
+    """Render *fig* to a PNG and return a ``data:image/png;base64,...`` URI."""
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=96, bbox_inches="tight")
+    plt.close(fig)
+    buf.seek(0)
+    b64 = base64.b64encode(buf.read()).decode()
+    return f"data:image/png;base64,{b64}"
+
+
+def _tile_dist_chart_src(df_all: pd.DataFrame) -> str | None:
+    """Generate an inline tile-distribution bar chart and return a data URI.
+
+    Shows best-tile value vs number of games, aggregated across all runs.
+    Returns ``None`` if the DataFrame is empty.
+    """
+    if df_all.empty:
+        return None
+    try:
+        tile_counts = df_all["best_tile"].value_counts().sort_index()
+        labels = [str(t) for t in tile_counts.index]
+        values = tile_counts.values
+
+        # Assign tile colours from the game palette
+        bar_colors = [
+            _TILE_COLORS.get(int(t), ("#cdc1b4", "#776e65"))[0]
+            for t in tile_counts.index
+        ]
+
+        fig, ax = plt.subplots(figsize=(5, 3))
+        fig.patch.set_facecolor("#faf8ef")
+        ax.set_facecolor("#faf8ef")
+        bars = ax.bar(labels, values, color=bar_colors, edgecolor="white", linewidth=0.8)
+        ax.set_title("Tile Distribution", fontsize=10, color="#776e65")
+        ax.set_xlabel("Best Tile", fontsize=8, color="#776e65")
+        ax.set_ylabel("Games", fontsize=8, color="#776e65")
+        ax.tick_params(colors="#776e65", labelsize=7)
+        for spine in ax.spines.values():
+            spine.set_edgecolor("#d3c4b4")
+        for bar, val in zip(bars, values):
+            ax.text(
+                bar.get_x() + bar.get_width() / 2,
+                bar.get_height() + max(values) * 0.01,
+                str(int(val)),
+                ha="center", va="bottom", fontsize=7, color="#776e65",
+            )
+        plt.tight_layout(pad=0.5)
+        return _fig_to_data_uri(fig)
+    except Exception:
+        return None
+
+
+def _run_stability_chart_src(run_dirs: list[Path]) -> str | None:
+    """Generate an inline run-stability chart (run_id vs avg_score) and return a data URI.
+
+    Only produced when there are 2 or more runs.  Returns ``None`` otherwise.
+    """
+    if len(run_dirs) < 2:
+        return None
+    try:
+        labels: list[str] = []
+        avgs: list[float] = []
+        for d in run_dirs:
+            csv_path = d / "results.csv"
+            if not csv_path.exists():
+                continue
+            df = pd.read_csv(csv_path)
+            if df.empty or "score" not in df.columns:
+                continue
+            # Use the timestamp part of the dir name (strip "run_" prefix) for labels
+            labels.append(d.name.removeprefix("run_"))
+            avgs.append(float(df["score"].mean()))
+
+        if len(avgs) < 2:
+            return None
+
+        fig, ax = plt.subplots(figsize=(max(4, len(labels) * 0.9 + 1), 3))
+        fig.patch.set_facecolor("#faf8ef")
+        ax.set_facecolor("#faf8ef")
+        ax.plot(range(len(labels)), avgs, marker="o", color="#f59563",
+                linewidth=2, markersize=5)
+        ax.set_xticks(range(len(labels)))
+        ax.set_xticklabels(
+            [lb.replace("_", "\n") for lb in labels],
+            fontsize=6, color="#776e65",
+        )
+        ax.set_title("Run Stability (Avg Score per Run)", fontsize=10, color="#776e65")
+        ax.set_xlabel("Run ID", fontsize=8, color="#776e65")
+        ax.set_ylabel("Avg Score", fontsize=8, color="#776e65")
+        ax.yaxis.set_major_formatter(ticker.FuncFormatter(lambda x, _: f"{x:,.0f}"))
+        ax.tick_params(axis="y", colors="#776e65", labelsize=7)
+        for spine in ax.spines.values():
+            spine.set_edgecolor("#d3c4b4")
+        plt.tight_layout(pad=0.5)
+        return _fig_to_data_uri(fig)
+    except Exception:
+        return None
 
 
 def _stats_grid(df: pd.DataFrame) -> str:
@@ -455,22 +582,20 @@ def _results_table(df: pd.DataFrame) -> str:
 
 
 def _run_accordion_item(
-    stem: str,
-    algo_dir: Path,
+    run_dir: Path,
     is_latest: bool,
 ) -> str:
     """Build one collapsible ``<details>`` accordion item for a single run.
 
     Parameters
     ----------
-    stem:
-        Timestamp stem (e.g. ``"20260307_120000"``).
-    algo_dir:
-        Directory containing the run's ``{stem}.csv`` and optional ``{stem}.png``.
+    run_dir:
+        Run subdirectory (e.g. ``results/Random/run_20260307_120000/``).
+        Must contain ``results.csv``; optionally ``chart.png``.
     is_latest:
         When ``True`` the item is rendered pre-opened and carries a "latest" badge.
     """
-    csv_path = algo_dir / f"{stem}.csv"
+    csv_path = run_dir / "results.csv"
     try:
         df = pd.read_csv(csv_path)
     except Exception:
@@ -481,6 +606,8 @@ def _run_accordion_item(
     best_tile = df["best_tile"].max()
     win_rate = df["won"].mean() * 100
 
+    # Derive a display-friendly timestamp from the dir name (strip "run_" prefix)
+    stem = run_dir.name.removeprefix("run_")
     ts_display = stem.replace("_", " ")
     anchor = f"run-{html.escape(stem)}"
 
@@ -496,8 +623,8 @@ def _run_accordion_item(
         f"</div>"
     )
 
-    # Embedded chart (if the PNG exists)
-    img_src = _embed_image(algo_dir / f"{stem}.png")
+    # Embedded chart (if chart.png exists inside the run dir)
+    img_src = _embed_image(run_dir / "chart.png")
     chart_html = (
         f'<div class="chart-wrap"><img src="{img_src}" '
         f'alt="Results chart for {html.escape(stem)}"></div>'
@@ -528,17 +655,24 @@ def _algo_section(algo_name: str, algo_dir: Path) -> str:
 
     Includes:
     * Aggregate stats cards across all stored runs
+    * Inline tile distribution bar chart (best tile vs game count)
+    * Inline run stability chart (run_id vs avg_score; only when ≥ 2 runs)
     * Run-history accordion — every stored run as a collapsible item,
       latest run pre-opened
     """
-    csv_files = sorted(algo_dir.glob("*.csv"))
-    if not csv_files:
+    run_dirs = sorted(
+        d for d in algo_dir.iterdir()
+        if d.is_dir() and d.name.startswith("run_")
+    ) if algo_dir.exists() else []
+
+    if not run_dirs:
         return ""
 
     frames = []
-    for f in csv_files:
+    for d in run_dirs:
+        csv_path = d / "results.csv"
         try:
-            frames.append(pd.read_csv(f))
+            frames.append(pd.read_csv(csv_path))
         except Exception:
             continue
 
@@ -548,16 +682,41 @@ def _algo_section(algo_name: str, algo_dir: Path) -> str:
     df_all = pd.concat(frames, ignore_index=True)
     stats_html = _stats_grid(df_all)
 
+    # ── Inline summary charts ──────────────────────────────────────────
+    tile_src = _tile_dist_chart_src(df_all)
+    stability_src = _run_stability_chart_src(run_dirs)
+
+    chart_cards: list[str] = []
+    if tile_src:
+        chart_cards.append(
+            f'<div class="summary-chart-card">'
+            f'<div class="chart-title">Tile Distribution</div>'
+            f'<img src="{tile_src}" alt="Tile distribution chart">'
+            f"</div>"
+        )
+    if stability_src:
+        chart_cards.append(
+            f'<div class="summary-chart-card">'
+            f'<div class="chart-title">Run Stability</div>'
+            f'<img src="{stability_src}" alt="Run stability chart">'
+            f"</div>"
+        )
+    summary_charts_html = (
+        f'<div class="summary-charts">{"".join(chart_cards)}</div>'
+        if chart_cards
+        else ""
+    )
+
     # Build the accordion — newest run first, auto-opened
     accordion_items: list[str] = []
-    for csv_file in reversed(csv_files):
-        is_latest = csv_file == csv_files[-1]
-        item = _run_accordion_item(csv_file.stem, algo_dir, is_latest=is_latest)
+    for run_dir in reversed(run_dirs):
+        is_latest = run_dir == run_dirs[-1]
+        item = _run_accordion_item(run_dir, is_latest=is_latest)
         if item:
             accordion_items.append(item)
 
     accordion_html = "\n".join(accordion_items)
-    runs_label = f"{len(csv_files)} run{'s' if len(csv_files) != 1 else ''} stored"
+    runs_label = f"{len(run_dirs)} run{'s' if len(run_dirs) != 1 else ''} stored"
     section_id = f"algo-{html.escape(algo_name.lower().replace(' ', '-'))}"
 
     return f"""\
@@ -568,6 +727,7 @@ def _algo_section(algo_name: str, algo_dir: Path) -> str:
   </div>
   <div class="algo-section-body">
     {stats_html}
+    {summary_charts_html}
     <div class="runs-heading">Run History</div>
     {accordion_html}
   </div>
@@ -598,13 +758,17 @@ def _comparison_section(algo_dirs: list[Path]) -> str:
     """
     rows_data = []
     for d in algo_dirs:
-        csv_files = sorted(d.glob("*.csv"))
-        if not csv_files:
+        run_dirs = sorted(
+            rd for rd in d.iterdir()
+            if rd.is_dir() and rd.name.startswith("run_")
+        ) if d.exists() else []
+        if not run_dirs:
             continue
         frames = []
-        for f in csv_files:
+        for rd in run_dirs:
+            csv_path = rd / "results.csv"
             try:
-                frames.append(pd.read_csv(f))
+                frames.append(pd.read_csv(csv_path))
             except Exception:
                 continue
         if not frames:

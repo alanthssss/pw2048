@@ -8,12 +8,11 @@ Usage
                    [--keep N] [--report] [--parallel N]
                    [--s3-bucket BUCKET] [--s3-prefix PREFIX] [--s3-public]
 
-    Results are saved to <output>/<AlgorithmName>/<timestamp>.{csv,png}, e.g.::
+    Results are saved under a per-run subdirectory, e.g.::
 
-        results/Random/20260307_120000.csv
-        results/Random/20260307_120000.png
-
-    Grouping by algorithm makes it easy to compare multiple runs side-by-side.
+        results/Random/run_20260307_120000/results.csv
+        results/Random/run_20260307_120000/chart.png
+        results/Random/run_20260307_120000/metrics.json
 
     ``--mode``       sets games/runs/parallel automatically:
                      dev: 100 games, 1 run, parallel=auto
@@ -57,8 +56,11 @@ Examples
 from __future__ import annotations
 
 import argparse
+import json
 import os
-from datetime import datetime
+import shutil
+import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
 
 from src.algorithms.greedy_algo import GreedyAlgorithm
@@ -92,8 +94,8 @@ def build_output_dir(base: str | Path, algorithm_name: str) -> Path:
 
         <base>/<AlgorithmName>/
 
-    All runs for the same algorithm are grouped under this directory.
-    Individual run files are named by their timestamp (see :func:`main`).
+    Individual runs are stored in ``run_<timestamp>/`` subdirectories under
+    this directory (see :func:`build_run_dir`).
 
     Parameters
     ----------
@@ -105,19 +107,92 @@ def build_output_dir(base: str | Path, algorithm_name: str) -> Path:
     return Path(base) / algorithm_name
 
 
-def prune_local_results(output_dir: Path, keep_n: int) -> list[Path]:
-    """Delete old local result files, keeping only the latest *keep_n* runs.
+def build_run_dir(algo_dir: Path, run_id: str) -> Path:
+    """Return the per-run subdirectory path: ``<algo_dir>/run_<run_id>/``.
 
-    Each "run" is identified by a timestamped stem that corresponds to both a
-    ``.csv`` and a ``.png`` file.  Runs are sorted lexicographically (which
-    matches chronological order because stems are ``YYYYMMDD_HHMMSS``).
+    Parameters
+    ----------
+    algo_dir:
+        Algorithm-scoped output directory returned by :func:`build_output_dir`.
+    run_id:
+        Timestamp string identifying this run (e.g. ``"20260307_120000"``).
+    """
+    return algo_dir / f"run_{run_id}"
+
+
+def _get_git_commit() -> str:
+    """Return the short HEAD commit hash, or ``"unknown"`` when not in a git repo."""
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"],
+            stderr=subprocess.DEVNULL,
+            text=True,
+        ).strip()
+    except Exception:
+        return "unknown"
+
+
+def write_run_metadata(
+    run_dir: Path,
+    algorithm_name: str,
+    algorithm_version: str,
+    n_games: int,
+    n_workers: int,
+    timestamp: str,
+    mode: str | None,
+) -> Path:
+    """Write ``metrics.json`` to *run_dir* and return its path.
+
+    Parameters
+    ----------
+    run_dir:
+        Directory for this run (already created).
+    algorithm_name:
+        Human-readable algorithm name.
+    algorithm_version:
+        Version string from the algorithm class.
+    n_games:
+        Number of games played in this run.
+    n_workers:
+        Number of parallel browser workers used.
+    timestamp:
+        ISO 8601 UTC timestamp string for this run.
+    mode:
+        The ``--mode`` value (``"dev"``, ``"release"``, ``"benchmark"``) or
+        ``"custom"`` when no mode flag was given.
+
+    Returns
+    -------
+    Path
+        Path to the written ``metrics.json`` file.
+    """
+    meta = {
+        "algorithm":         algorithm_name,
+        "algorithm_version": algorithm_version,
+        "games":             n_games,
+        "parallel_workers":  n_workers,
+        "timestamp":         timestamp,
+        "git_commit":        _get_git_commit(),
+        "mode":              mode or "custom",
+    }
+    path = run_dir / "metrics.json"
+    path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+    return path
+
+
+def prune_local_results(output_dir: Path, keep_n: int) -> list[Path]:
+    """Delete old run directories, keeping only the latest *keep_n* runs.
+
+    Each "run" is a subdirectory named ``run_<timestamp>`` under *output_dir*.
+    Directories are sorted lexicographically (chronological order because the
+    timestamp prefix is ``YYYYMMDD_HHMMSS``).
 
     Parameters
     ----------
     output_dir:
         Algorithm-scoped results directory (e.g. ``results/Random/``).
     keep_n:
-        Number of most-recent runs to retain.  Pass ``0`` to keep all runs.
+        Number of most-recent run directories to retain.  Pass ``0`` to keep all.
 
     Returns
     -------
@@ -126,18 +201,21 @@ def prune_local_results(output_dir: Path, keep_n: int) -> list[Path]:
     """
     if keep_n <= 0:
         return []
-    csv_files = sorted(output_dir.glob("*.csv"))
-    old_stems = [f.stem for f in csv_files[:-keep_n]] if len(csv_files) > keep_n else []
+    run_dirs = sorted(
+        d for d in output_dir.iterdir()
+        if d.is_dir() and d.name.startswith("run_")
+    ) if output_dir.exists() else []
+    old_dirs = run_dirs[:-keep_n] if len(run_dirs) > keep_n else []
 
     deleted: list[Path] = []
-    for stem in old_stems:
-        for ext in ("csv", "png"):
-            path = output_dir / f"{stem}.{ext}"
-            if path.exists():
-                path.unlink()
-                deleted.append(path)
+    for d in old_dirs:
+        for f in sorted(d.iterdir()):
+            f.unlink()
+            deleted.append(f)
+        d.rmdir()
+        deleted.append(d)
     if deleted:
-        print(f"  Pruned {len(deleted)} old local file(s) in '{output_dir}'")
+        print(f"  Pruned {len(old_dirs)} old run dir(s) in '{output_dir}'")
     return deleted
 
 
@@ -161,7 +239,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         metavar="N",
         help="Number of times to repeat the full set of games (default: 1). "
-             "Each run produces its own CSV/PNG with a unique run_id.",
+             "Each run produces its own run_<timestamp>/ directory.",
     )
     parser.add_argument(
         "--algorithm",
@@ -173,7 +251,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--output",
         default="results",
         help="Base directory for result charts (default: results/). "
-             "Results are saved under <output>/<algorithm>/<timestamp>.{csv,png}",
+             "Results are saved under <output>/<algorithm>/run_<timestamp>/",
     )
     parser.add_argument("--show", action="store_true", help="Show the browser window while playing")
     parser.add_argument(
@@ -245,8 +323,8 @@ def main(argv: list[str] | None = None) -> None:
     algo_cls = ALGORITHMS[args.algorithm]
     algorithm = algo_cls()
 
-    output_dir = build_output_dir(args.output, algorithm.name)
-    output_dir.mkdir(parents=True, exist_ok=True)
+    algo_dir = build_output_dir(args.output, algorithm.name)
+    algo_dir.mkdir(parents=True, exist_ok=True)
 
     n_workers = max(1, args.parallel)
     n_runs = max(1, args.runs)
@@ -256,33 +334,49 @@ def main(argv: list[str] | None = None) -> None:
         f"\nRunning {args.games} games{runs_note} with the '{algorithm.name}' algorithm{parallel_note}…\n"
     )
 
-    last_timestamp = None
+    last_run_id = None
     for run_num in range(1, n_runs + 1):
         if n_runs > 1:
             print(f"\n─── Run {run_num}/{n_runs} ───")
 
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        last_timestamp = timestamp
+        run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+        last_run_id = run_id
+        run_dir = build_run_dir(algo_dir, run_id)
+        run_dir.mkdir(parents=True, exist_ok=True)
 
         df = run_games(
             algorithm,
             n_games=args.games,
             headless=not args.show,
             n_workers=n_workers,
-            run_id=timestamp,
+            run_id=run_id,
         )
 
-        plot_results(df, output_dir=output_dir, output_stem=timestamp)
+        # Save chart (always named chart.png inside the run dir)
+        plot_results(df, output_dir=run_dir, output_stem="chart")
 
         # Save raw data
-        csv_path = output_dir / f"{timestamp}.csv"
+        csv_path = run_dir / "results.csv"
         df.to_csv(csv_path, index=False)
         print(f"Raw data saved → {csv_path}")
+
+        # Save run metadata
+        ts_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        meta_path = write_run_metadata(
+            run_dir=run_dir,
+            algorithm_name=algorithm.name,
+            algorithm_version=getattr(algorithm, "version", "v1"),
+            n_games=args.games,
+            n_workers=n_workers,
+            timestamp=ts_iso,
+            mode=args.mode,
+        )
+        print(f"Metadata saved → {meta_path}")
 
     # ------------------------------------------------------------------
     # Prune old local results
     # ------------------------------------------------------------------
-    prune_local_results(output_dir, keep_n=args.keep)
+    prune_local_results(algo_dir, keep_n=args.keep)
 
     # ------------------------------------------------------------------
     # Generate HTML report
@@ -302,8 +396,8 @@ def main(argv: list[str] | None = None) -> None:
 
         print(f"\nUploading results to s3://{args.s3_bucket}/{args.s3_prefix}/…")
         sync_run_to_s3(
-            output_dir=output_dir,
-            timestamp=last_timestamp,
+            algo_dir=algo_dir,
+            run_id=last_run_id,
             bucket=args.s3_bucket,
             s3_prefix=args.s3_prefix,
             algorithm_name=algorithm.name,

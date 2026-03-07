@@ -84,29 +84,33 @@ def upload_file(
     return url
 
 
-def list_result_stems(bucket: str, prefix: str) -> list[str]:
-    """Return a sorted list of unique timestamp stems under *prefix* in S3.
+def list_run_dirs(bucket: str, prefix: str) -> list[str]:
+    """Return a sorted list of unique ``run_*`` directory names under *prefix* in S3.
 
     For example, if the bucket contains::
 
-        results/Random/20260307_120000.csv
-        results/Random/20260307_120000.png
-        results/Random/20260307_130000.csv
-        results/Random/20260307_130000.png
+        results/Random/run_20260307_120000/results.csv
+        results/Random/run_20260307_120000/chart.png
+        results/Random/run_20260307_130000/results.csv
 
-    calling ``list_result_stems(bucket, "results/Random/")`` returns::
+    calling ``list_run_dirs(bucket, "results/Random/")`` returns::
 
-        ["20260307_120000", "20260307_130000"]
+        ["run_20260307_120000", "run_20260307_130000"]
     """
     _require_boto3()
     client = boto3.client("s3")
     paginator = client.get_paginator("list_objects_v2")
-    stems: set[str] = set()
+    run_names: set[str] = set()
     for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
         for obj in page.get("Contents", []):
             key = obj["Key"]
-            stems.add(Path(key).stem)
-    return sorted(stems)
+            # key is like: results/Random/run_20260307_120000/results.csv
+            # We want the "run_*" segment
+            relative = key[len(prefix):]  # run_20260307_120000/results.csv
+            parts = relative.split("/", 1)
+            if parts[0].startswith("run_"):
+                run_names.add(parts[0])
+    return sorted(run_names)
 
 
 def delete_s3_objects(bucket: str, keys: list[str]) -> None:
@@ -131,7 +135,7 @@ def prune_s3_results(
     algorithm_name: str,
     keep_n: int,
 ) -> list[str]:
-    """Delete old algorithm results from S3, keeping only the latest *keep_n* runs.
+    """Delete old algorithm run directories from S3, keeping only the latest *keep_n*.
 
     Parameters
     ----------
@@ -150,35 +154,44 @@ def prune_s3_results(
         S3 keys that were deleted.
     """
     prefix = f"{s3_prefix.rstrip('/')}/{algorithm_name}/"
-    stems = list_result_stems(bucket, prefix)
-    old_stems = stems[:-keep_n] if len(stems) > keep_n else []
+    run_names = list_run_dirs(bucket, prefix)
+    old_names = run_names[:-keep_n] if len(run_names) > keep_n else []
 
+    # List all keys under each old run directory and delete them
+    client = boto3.client("s3")
+    paginator = client.get_paginator("list_objects_v2")
     keys_to_delete: list[str] = []
-    for stem in old_stems:
-        for ext in ("csv", "png"):
-            keys_to_delete.append(f"{prefix}{stem}.{ext}")
+    for run_name in old_names:
+        run_prefix = f"{prefix}{run_name}/"
+        for page in paginator.paginate(Bucket=bucket, Prefix=run_prefix):
+            for obj in page.get("Contents", []):
+                keys_to_delete.append(obj["Key"])
 
     delete_s3_objects(bucket, keys_to_delete)
     return keys_to_delete
 
 
 def sync_run_to_s3(
-    output_dir: Path,
-    timestamp: str,
+    algo_dir: Path,
+    run_id: str,
     bucket: str,
     s3_prefix: str,
     algorithm_name: str,
     keep_n: int,
     public_read: bool = False,
 ) -> dict[str, str]:
-    """Upload one run's CSV and PNG to S3, then prune older runs.
+    """Upload one run's files to S3, then prune older runs.
+
+    All files in ``algo_dir/run_<run_id>/`` (``results.csv``, ``chart.png``,
+    ``metrics.json``) are uploaded under
+    ``<s3_prefix>/<algorithm_name>/run_<run_id>/``.
 
     Parameters
     ----------
-    output_dir:
-        Local directory that contains the timestamped files.
-    timestamp:
-        The timestamp stem used for the run (e.g. ``"20260307_120000"``).
+    algo_dir:
+        Local algorithm-scoped directory (e.g. ``results/Random/``).
+    run_id:
+        The run timestamp ID (e.g. ``"20260307_120000"``).
     bucket:
         S3 bucket name.
     s3_prefix:
@@ -197,12 +210,19 @@ def sync_run_to_s3(
     """
     _require_boto3()
     algo_prefix = f"{s3_prefix.rstrip('/')}/{algorithm_name}"
+    run_name = f"run_{run_id}"
+    run_dir = algo_dir / run_name
     uploaded: dict[str, str] = {}
 
-    for ext, ctype in (("csv", "text/csv"), ("png", "image/png")):
-        local = output_dir / f"{timestamp}.{ext}"
+    file_ctypes = [
+        ("results.csv",   "text/csv"),
+        ("chart.png",     "image/png"),
+        ("metrics.json",  "application/json"),
+    ]
+    for filename, ctype in file_ctypes:
+        local = run_dir / filename
         if local.exists():
-            key = f"{algo_prefix}/{timestamp}.{ext}"
+            key = f"{algo_prefix}/{run_name}/{filename}"
             url = upload_file(local, bucket, key, content_type=ctype, public_read=public_read)
             uploaded[str(local)] = url
             print(f"  Uploaded → s3://{bucket}/{key}")
