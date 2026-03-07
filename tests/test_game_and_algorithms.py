@@ -6,11 +6,32 @@ import pathlib
 import pytest
 from playwright.sync_api import sync_playwright
 
+from main import build_output_dir
 from src.algorithms.random_algo import RandomAlgorithm
 from src.game import Game2048, DIRECTIONS
 
 
 GAME_URL = (pathlib.Path(__file__).parent.parent / "game.html").as_uri()
+
+
+
+class TestBuildOutputDir:
+    def test_returns_base_plus_algorithm_name(self):
+        result = build_output_dir("results", "Random")
+        assert result == pathlib.Path("results") / "Random"
+
+    def test_algorithm_name_is_last_segment(self):
+        result = build_output_dir("results", "MyAlgo")
+        assert result.name == "MyAlgo"
+
+    def test_custom_base_directory(self):
+        result = build_output_dir("/tmp/custom", "Random")
+        assert result == pathlib.Path("/tmp/custom") / "Random"
+
+    def test_different_algorithm_names_produce_different_dirs(self):
+        dir_a = build_output_dir("results", "AlgoA")
+        dir_b = build_output_dir("results", "AlgoB")
+        assert dir_a != dir_b
 
 
 @pytest.fixture(scope="module")
