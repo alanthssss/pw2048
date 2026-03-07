@@ -6,7 +6,7 @@ Automate the [2048 game](https://play2048.co/) using [Playwright](https://playwr
 
 | Field | Value |
 |---|---|
-| **Current best algorithm** | Greedy |
+| **Current best algorithm** | Heuristic |
 | **Highest best tile** | — (run benchmarks to populate) |
 | **Benchmark protocol** | 5 runs × 500 games (auto-parallel) |
 
@@ -44,7 +44,7 @@ python main.py --mode benchmark --report
 ### Baselines
 - [x] **Random** — pick a random direction each turn
 - [x] **Greedy** — pick the move that maximises immediate score gain
-- [ ] **Heuristic** — hand-crafted heuristics (e.g. corner strategy, monotonicity)
+- [x] **Heuristic** — hand-crafted heuristics (e.g. corner strategy, monotonicity)
 
 ### Search Algorithms
 - [ ] **Expectimax** — game-tree search with chance nodes for tile spawns
@@ -69,7 +69,9 @@ pw2048/
 │   ├── storage.py             # S3 upload / prune helpers (lazy boto3 import)
 │   └── algorithms/
 │       ├── base.py            # Abstract BaseAlgorithm class
-│       └── random_algo.py     # Simple random algorithm
+│       ├── random_algo.py     # Random algorithm
+│       ├── greedy_algo.py     # Greedy (maximise immediate score gain)
+│       └── heuristic_algo.py  # Heuristic (empty tiles, monotonicity, corner, merge)
 └── tests/
     ├── test_game_and_algorithms.py
     └── test_storage_and_report.py
@@ -92,8 +94,8 @@ python main.py --games 50 --output my_results
 python main.py --games 5 --show
 ```
 
-Charts and a CSV with raw game data are saved under `results/<algorithm>/<timestamp>.{png,csv}`
-(e.g. `results/Random/20260307_120000.png`).
+Charts and a CSV with raw game data are saved under `results/<AlgorithmName>/run_<YYYYMMDD_HHMMSS>/` (e.g. `results/Random/run_20260307_120000/`).
+Each run directory contains `results.csv`, `chart.png`, and `metrics.json`.
 All runs for the same algorithm are grouped together, making it easy to compare them side-by-side.
 Use `--output` to change the root directory.
 
@@ -101,8 +103,10 @@ Use `--output` to change the root directory.
 
 | Flag | Default | Description |
 |---|---|---|
-| `--games N` | `20` | Number of games to play |
-| `--algorithm NAME` | `random` | Algorithm to use |
+| `--mode MODE` | — | Preset: `dev` (100 games, 1 run), `release` (1 000 games, 1 run), `benchmark` (500 games, 5 runs). Explicit `--games`/`--runs`/`--parallel` override the preset. |
+| `--games N` | `20` | Number of games to play per run |
+| `--runs N` | `1` | Number of times to repeat the full set of games; each run gets its own `run_<timestamp>/` directory |
+| `--algorithm NAME` | `random` | Algorithm to use (`random`, `greedy`, `heuristic`) |
 | `--output DIR` | `results` | Root directory for run artifacts |
 | `--show` | off | Open a visible browser window while playing |
 | `--keep N` | `10` | Keep only the N most-recent runs per algorithm; pass `0` to disable pruning |
@@ -165,7 +169,7 @@ Running 30 games with the 'Random' algorithm…
   ...
   Game  30/30  score=   580  max_tile=  64  moves=  80  won=False
 
-Raw data saved → results/Random/20260307_120000.csv
+Raw data saved → results/Random/run_20260307_120000/results.csv
 ```
 
 After running `python main.py --games 30 --parallel 4 --report`:
@@ -177,7 +181,7 @@ Running 30 games with the 'Random' algorithm (4 parallel workers)…
   [worker offset=0] Game  1  score=  1820  …
   …
 
-Raw data saved → results/Random/20260307_120000.csv
+Raw data saved → results/Random/run_20260307_120000/results.csv
 Report saved  → results/index.html
 ```
 
