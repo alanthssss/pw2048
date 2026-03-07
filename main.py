@@ -4,7 +4,8 @@ pw2048 – Play 2048 with different algorithms and visualise the results.
 
 Usage
 -----
-    python main.py [--mode dev|release|benchmark]
+    python main.py [--tui]
+                   [--mode dev|release|benchmark]
                    [--games N] [--runs N] [--algorithm random] [--output results/]
                    [--keep N] [--report] [--parallel N]
                    [--s3-bucket BUCKET] [--s3-prefix PREFIX] [--s3-public]
@@ -52,6 +53,9 @@ Examples
 
     # Upload results to S3
     python main.py --games 10 --s3-bucket my-bucket --report
+
+    # Launch the interactive TUI wizard
+    python main.py --tui
 """
 
 from __future__ import annotations
@@ -298,6 +302,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Apply public-read ACL to uploaded S3 objects.",
     )
+    parser.add_argument(
+        "--tui",
+        action="store_true",
+        help="Launch the interactive TUI wizard to configure and start a run.",
+    )
 
     argcomplete.autocomplete(parser)
     args = parser.parse_args(argv)
@@ -325,6 +334,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
+
+    # Launch the interactive TUI wizard when --tui is requested, then
+    # re-parse the argv it returns.
+    if args.tui:
+        from src.tui import run_tui
+
+        tui_argv = run_tui()
+        args = parse_args(tui_argv)
 
     algo_cls = ALGORITHMS[args.algorithm]
     algorithm = algo_cls()
