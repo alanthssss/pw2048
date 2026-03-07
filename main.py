@@ -4,7 +4,7 @@ pw2048 – Play 2048 with different algorithms and visualise the results.
 
 Usage
 -----
-    python main.py [--tui]
+    python main.py [--tui | --gui | --web]
                    [--mode dev|release|benchmark]
                    [--games N] [--runs N] [--algorithm random] [--output results/]
                    [--keep N] [--report] [--parallel N]
@@ -56,6 +56,12 @@ Examples
 
     # Launch the interactive TUI wizard
     python main.py --tui
+
+    # Launch the desktop GUI wizard
+    python main.py --gui
+
+    # Launch the web UI wizard in the browser
+    python main.py --web
 """
 
 from __future__ import annotations
@@ -307,6 +313,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Launch the interactive TUI wizard to configure and start a run.",
     )
+    parser.add_argument(
+        "--gui",
+        action="store_true",
+        help="Launch the desktop GUI wizard (tkinter) to configure and start a run.",
+    )
+    parser.add_argument(
+        "--web",
+        action="store_true",
+        help="Open the web UI launcher in the system browser to configure and start a run.",
+    )
 
     argcomplete.autocomplete(parser)
     args = parser.parse_args(argv)
@@ -342,6 +358,20 @@ def main(argv: list[str] | None = None) -> None:
 
         tui_argv = run_tui()
         args = parse_args(tui_argv)
+
+    # Launch the desktop GUI wizard when --gui is requested.
+    if args.gui:
+        from src.gui import run_gui
+
+        gui_argv = run_gui()
+        args = parse_args(gui_argv)
+
+    # Launch the web UI when --web is requested.
+    if args.web:
+        from src.webui import run_webui
+
+        web_argv = run_webui()
+        args = parse_args(web_argv)
 
     algo_cls = ALGORITHMS[args.algorithm]
     algorithm = algo_cls()

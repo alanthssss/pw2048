@@ -68,6 +68,8 @@ pw2048/
 │   ├── report.py              # Self-contained HTML dashboard generator
 │   ├── storage.py             # S3 upload / prune helpers (lazy boto3 import)
 │   ├── tui.py                 # Interactive TUI wizard (questionary + rich)
+│   ├── gui.py                 # Desktop GUI wizard (tkinter – stdlib)
+│   ├── webui.py               # Web UI launcher (http.server – stdlib)
 │   └── algorithms/
 │       ├── base.py            # Abstract BaseAlgorithm class
 │       ├── random_algo.py     # Random algorithm
@@ -76,7 +78,9 @@ pw2048/
 └── tests/
     ├── test_game_and_algorithms.py
     ├── test_storage_and_report.py
-    └── test_tui.py
+    ├── test_tui.py
+    ├── test_gui.py
+    └── test_webui.py
 ```
 
 ## Quick start
@@ -86,8 +90,14 @@ pw2048/
 pip install -r requirements.txt
 python -m playwright install chromium
 
-# Launch the interactive wizard (recommended for first-time users)
+# Launch the interactive TUI wizard
 python main.py --tui
+
+# Launch the desktop GUI wizard (tkinter)
+python main.py --gui
+
+# Launch the web UI wizard in your browser
+python main.py --web
 
 # Run 20 games with the random algorithm (default)
 python main.py
@@ -164,6 +174,49 @@ The wizard covers all parameters available via CLI flags:
 | HTML report | `--report` |
 | S3 upload | `--s3-bucket`, `--s3-prefix`, `--s3-public` |
 
+## Desktop GUI wizard
+
+Prefer a point-and-click interface?  Launch the native tkinter window:
+
+```bash
+python main.py --gui
+```
+
+The window exposes the same options as the TUI — algorithm, mode, games/runs/workers,
+output directory, show-browser, keep-N, HTML report, and optional S3 upload — all
+in a standard form layout with dropdown menus, checkboxes, and text fields.
+
+**Prerequisites:** tkinter ships with Python on Windows and macOS.  On
+Debian/Ubuntu it requires one extra package:
+
+```bash
+sudo apt-get install python3-tk
+```
+
+## Web UI wizard
+
+Prefer a browser-based form?  Start the local web launcher:
+
+```bash
+python main.py --web
+```
+
+pw2048 starts an HTTP server on a random free port, prints the URL, and opens it
+in your default browser automatically:
+
+```
+  Web UI → http://127.0.0.1:54321/
+  (fill in the form and click Launch — check your terminal for progress)
+```
+
+The form stays open until you click **Launch ▶**, at which point it returns a
+confirmation page, shuts the server down, and starts the run in your terminal.
+
+![pw2048 Web Launcher](https://github.com/user-attachments/assets/f076e497-a0a0-4649-903f-f20b83df5a49)
+
+The web UI requires **no third-party packages** — it uses only the Python
+standard library (`http.server`, `threading`, `webbrowser`).
+
 ## Shell autocompletion
 
 pw2048 supports tab-completion for all CLI flags and their values via
@@ -211,9 +264,9 @@ $ python main.py --mode <TAB>
 benchmark    dev    release
 
 $ python main.py --<TAB>
---algorithm  --games  --keep  --mode  --output  --parallel
+--algorithm  --games  --gui  --keep  --mode  --output  --parallel
 --report     --runs   --show  --s3-bucket  --s3-prefix  --s3-public
---tui
+--tui        --web
 ```
 
 ## All CLI flags
@@ -233,6 +286,8 @@ $ python main.py --<TAB>
 | `--s3-prefix PREFIX` | `results` | Key prefix inside the S3 bucket |
 | `--s3-public` | off | Apply a public-read ACL to uploaded S3 objects |
 | `--tui` | off | Launch the interactive TUI wizard to configure all parameters step-by-step |
+| `--gui` | off | Launch the desktop GUI wizard (tkinter) to configure and start a run |
+| `--web` | off | Open the web UI launcher in the system browser to configure and start a run |
 
 ## Parallel execution
 
