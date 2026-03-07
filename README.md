@@ -2,6 +2,43 @@
 
 Automate the [2048 game](https://play2048.co/) using [Playwright](https://playwright.dev/python/) and collect fancy data visualizations of each algorithm's performance.
 
+## At a Glance
+
+| Field | Value |
+|---|---|
+| **Current best algorithm** | Greedy |
+| **Highest best tile** | — (run benchmarks to populate) |
+| **Benchmark protocol** | 5 runs × 500 games (auto-parallel) |
+
+## Current Leaderboard
+
+> Run `python main.py --mode benchmark --report` to populate this table.
+
+| Rank | Algorithm | Stage | Runs | Avg Score | Median | P90 | Best Tile | Win Rate |
+|---:|---|---|---:|---:|---:|---:|---:|---:|
+| — | — | — | — | — | — | — | — | — |
+
+The HTML dashboard (`--report`) keeps this table live and sorted by **Avg Score**.
+
+## Benchmark Protocol
+
+| Mode | Runs | Games / Run | Parallel |
+|---|---|---|---|
+| `dev` | 1 | 100 | auto (`os.cpu_count()`) |
+| `release` | 1 | 1 000 | auto |
+| `benchmark` | 5 | 500 | auto |
+
+```bash
+# Quick dev scratch (100 games)
+python main.py --mode dev
+
+# Release quality (1 000 games)
+python main.py --mode release --report
+
+# Full benchmark (5 × 500 games, HTML leaderboard)
+python main.py --mode benchmark --report
+```
+
 ## Roadmap
 
 ### Baselines
@@ -149,6 +186,27 @@ Report saved  → results/index.html
 ```bash
 python -m pytest tests/ -v
 ```
+
+## Result Layout
+
+Each run is saved in a timestamped subdirectory:
+
+```
+results/
+└── <AlgorithmName>/
+    └── run_<YYYYMMDD_HHMMSS>/
+        ├── results.csv      # per-game data (score, best_tile, moves, duration, won)
+        ├── chart.png        # visualisation chart
+        └── metrics.json     # run metadata (mode, games, workers, git_commit, …)
+```
+
+The HTML dashboard (`--report`) is written to `results/index.html` and contains:
+- **Hero cards** — best avg score, highest best tile, most stable & fastest algorithm
+- **Main Leaderboard** — all algorithms sorted by avg_score with full stats
+- **Stability Board** — mean/std of avg_score across multiple runs
+- **Efficiency Board** — games/second throughput per algorithm
+- **Comparison Charts** — avg/median/P90 grouped bars, score histogram, best-tile distribution, run stability
+- **Per-algorithm sections** — aggregate stats, inline charts, and run-history accordion (each run shows a metadata box with `algorithm_version`, `mode`, `games`, `parallel_workers`, `timestamp`, `git_commit`)
 
 ## Adding a new algorithm
 

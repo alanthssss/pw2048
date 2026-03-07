@@ -29,6 +29,7 @@ from __future__ import annotations
 import base64
 import html
 import io
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -369,6 +370,127 @@ footer {{
     margin-top: 8px;
 }}
 
+/* ── Hero summary cards ──────────────────────────────────────────── */
+.hero-section {{
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 16px;
+    margin-bottom: 40px;
+}}
+.hero-card {{
+    background: white;
+    border-radius: 12px;
+    box-shadow: 0 2px 12px rgba(0,0,0,.08);
+    padding: 20px 24px;
+    text-align: center;
+    border-top: 4px solid {card_accent};
+}}
+.hero-card .hero-label {{
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: .1em;
+    opacity: .65;
+    margin-bottom: 8px;
+}}
+.hero-card .hero-value {{
+    font-size: 1.8rem;
+    font-weight: 700;
+    color: {card_accent};
+}}
+.hero-card .hero-sub {{
+    font-size: 0.8rem;
+    opacity: .7;
+    margin-top: 4px;
+}}
+
+/* ── Board sections (leaderboard / stability / efficiency) ─────────── */
+.board-section {{
+    background: white;
+    border-radius: 12px;
+    box-shadow: 0 2px 12px rgba(0,0,0,.08);
+    margin-bottom: 48px;
+    overflow: hidden;
+}}
+.board-header {{
+    background: {header_bg};
+    color: {header_fg};
+    padding: 14px 24px;
+    font-size: 1.3rem;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}}
+.board-body {{ padding: 24px; }}
+
+/* ── Stage badge ─────────────────────────────────────────────────── */
+.stage-badge {{
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 0.72rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .05em;
+}}
+.stage-benchmark {{ background: {card_accent}; color: white; }}
+.stage-release   {{ background: {win_badge}; color: white; }}
+.stage-dev       {{ background: {nav_bg}; color: {nav_fg}; }}
+.stage-custom    {{ background: {card_bg}; color: {text_dark}; }}
+
+/* ── Rank cells ──────────────────────────────────────────────────── */
+.rank-1 {{ font-weight: 700; color: {card_accent}; }}
+.rank-2 {{ font-weight: 700; color: {header_bg}; }}
+.rank-3 {{ font-weight: 600; color: {text_dark}; }}
+
+/* ── Run metadata box ────────────────────────────────────────────── */
+.run-meta-box {{
+    background: {card_bg};
+    border-radius: 8px;
+    padding: 12px 16px;
+    margin-bottom: 16px;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 8px 16px;
+    font-size: 0.82rem;
+}}
+.run-meta-item .meta-key {{
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: .08em;
+    opacity: .6;
+    margin-bottom: 2px;
+}}
+.run-meta-item .meta-val {{
+    font-weight: 600;
+    color: {text_dark};
+    word-break: break-all;
+}}
+
+/* ── Global comparison charts grid ──────────────────────────────── */
+.global-charts-grid {{
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 16px;
+}}
+.global-chart-card {{
+    background: {card_bg};
+    border-radius: 8px;
+    padding: 12px;
+    text-align: center;
+}}
+.global-chart-card .chart-title {{
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: .07em;
+    opacity: .7;
+    margin-bottom: 8px;
+}}
+.global-chart-card img {{
+    max-width: 100%;
+    border-radius: 4px;
+}}
+
 /* ── Responsive ────────────────────────────────────────────────────── */
 @media (max-width: 600px) {{
     header h1 {{ font-size: 1.35rem; }}
@@ -509,6 +631,572 @@ def _run_stability_chart_src(run_dirs: list[Path]) -> str | None:
         return None
 
 
+# ---------------------------------------------------------------------------
+# Leaderboard data collection
+# ---------------------------------------------------------------------------
+
+def _collect_leaderboard_data(algo_dirs: list[Path]) -> list[dict]:
+    """Collect aggregate metrics for every algorithm directory.
+
+    Returns a list of dicts (one per algorithm) sorted by avg_score descending.
+    Each dict contains all fields needed for the leaderboard, stability, and
+    efficiency sections.
+    """
+    rows: list[dict] = []
+    for d in algo_dirs:
+        run_dirs = sorted(
+            rd for rd in d.iterdir()
+            if rd.is_dir() and rd.name.startswith("run_")
+        ) if d.exists() else []
+        if not run_dirs:
+            continue
+
+        frames: list[pd.DataFrame] = []
+        run_avgs: list[float] = []
+        run_medians: list[float] = []
+        run_p90s: list[float] = []
+
+        for rd in run_dirs:
+            csv_path = rd / "results.csv"
+            try:
+                df_run = pd.read_csv(csv_path)
+                frames.append(df_run)
+                if not df_run.empty and "score" in df_run.columns:
+                    run_avgs.append(float(df_run["score"].mean()))
+                    run_medians.append(float(df_run["score"].median()))
+                    run_p90s.append(float(df_run["score"].quantile(0.9)))
+            except Exception:
+                continue
+
+        if not frames:
+            continue
+
+        df_all = pd.concat(frames, ignore_index=True)
+
+        # Derive stage from the most-recent run's metrics.json
+        stage = "custom"
+        for rd in reversed(run_dirs):
+            meta_path = rd / "metrics.json"
+            if meta_path.exists():
+                try:
+                    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+                    stage = meta.get("mode") or "custom"
+                    break
+                except Exception:
+                    pass
+
+        avg_duration = (
+            float(df_all["duration"].mean()) if "duration" in df_all.columns else 0.0
+        )
+
+        rows.append(
+            {
+                "name": d.name,
+                "stage": stage,
+                "runs": len(run_dirs),
+                "total_games": len(df_all),
+                "avg_score": float(df_all["score"].mean()),
+                "median_score": float(df_all["score"].median()),
+                "p90_score": float(df_all["score"].quantile(0.9)),
+                "max_score": float(df_all["score"].max()),
+                "best_tile": int(df_all["best_tile"].max()),
+                "win_rate": float(df_all["won"].mean()) * 100,
+                "avg_moves": (
+                    float(df_all["moves"].mean()) if "moves" in df_all.columns else 0.0
+                ),
+                "avg_duration": avg_duration,
+                "games_per_second": (1.0 / avg_duration) if avg_duration > 0 else 0.0,
+                # Per-run stability arrays
+                "run_avgs": run_avgs,
+                "run_medians": run_medians,
+                "run_p90s": run_p90s,
+                "mean_avg_score": (
+                    float(pd.Series(run_avgs).mean()) if run_avgs else 0.0
+                ),
+                "std_avg_score": (
+                    float(pd.Series(run_avgs).std()) if len(run_avgs) > 1 else 0.0
+                ),
+                "mean_median_score": (
+                    float(pd.Series(run_medians).mean()) if run_medians else 0.0
+                ),
+                "mean_p90_score": (
+                    float(pd.Series(run_p90s).mean()) if run_p90s else 0.0
+                ),
+            }
+        )
+
+    rows.sort(key=lambda r: r["avg_score"], reverse=True)
+    return rows
+
+
+# ---------------------------------------------------------------------------
+# Hero, Leaderboard, Stability, Efficiency sections
+# ---------------------------------------------------------------------------
+
+def _stage_badge(stage: str) -> str:
+    """Return an HTML stage badge element."""
+    cls = f"stage-{html.escape(stage.lower())}"
+    return f'<span class="stage-badge {cls}">{html.escape(stage)}</span>'
+
+
+def _hero_section(rows_data: list[dict]) -> str:
+    """Build the top hero summary cards (best avg, best tile, most stable, fastest)."""
+    if not rows_data:
+        return ""
+
+    best_avg_row = max(rows_data, key=lambda r: r["avg_score"])
+    best_tile_row = max(rows_data, key=lambda r: r["best_tile"])
+
+    stable_rows = [r for r in rows_data if len(r["run_avgs"]) >= 2]
+    most_stable = (
+        min(stable_rows, key=lambda r: r["std_avg_score"]) if stable_rows else None
+    )
+    fastest = (
+        max(rows_data, key=lambda r: r["games_per_second"]) if rows_data else None
+    )
+
+    def _card(label: str, value: str, sub: str) -> str:
+        return (
+            f'<div class="hero-card">'
+            f'<div class="hero-label">{label}</div>'
+            f'<div class="hero-value">{value}</div>'
+            f'<div class="hero-sub">{html.escape(sub)}</div>'
+            f"</div>"
+        )
+
+    cards = [
+        _card("Best Avg Score", f"{best_avg_row['avg_score']:,.0f}", best_avg_row["name"]),
+        _card("Highest Best Tile", str(best_tile_row["best_tile"]), best_tile_row["name"]),
+    ]
+    if most_stable:
+        cards.append(
+            _card(
+                "Most Stable",
+                html.escape(most_stable["name"]),
+                f"\u03c3={most_stable['std_avg_score']:,.0f}",
+            )
+        )
+    if fastest and fastest["games_per_second"] > 0:
+        cards.append(
+            _card(
+                "Fastest",
+                html.escape(fastest["name"]),
+                f"{fastest['games_per_second']:.2f} games/s",
+            )
+        )
+
+    return f'<div class="hero-section">{"".join(cards)}</div>'
+
+
+def _leaderboard_section(rows_data: list[dict]) -> str:
+    """Build the main leaderboard table sorted by avg_score."""
+    if not rows_data:
+        return ""
+
+    rows_html: list[str] = []
+    for i, r in enumerate(rows_data, 1):
+        rank_cls = f' class="rank-{i}"' if i <= 3 else ""
+        rows_html.append(
+            "<tr>"
+            f"<td{rank_cls}>{i}</td>"
+            f"<td><strong>{html.escape(r['name'])}</strong></td>"
+            f"<td>{_stage_badge(r['stage'])}</td>"
+            f"<td>{r['runs']}</td>"
+            f"<td>{r['total_games']:,}</td>"
+            f"<td><strong>{r['avg_score']:,.0f}</strong></td>"
+            f"<td>{r['median_score']:,.0f}</td>"
+            f"<td>{r['p90_score']:,.0f}</td>"
+            f"<td>{r['max_score']:,.0f}</td>"
+            f"<td>{_tile_chip(r['best_tile'])}</td>"
+            f"<td>{r['win_rate']:.1f}%</td>"
+            f"<td>{r['avg_moves']:.0f}</td>"
+            f"<td>{r['avg_duration']:.1f}s</td>"
+            "</tr>"
+        )
+
+    rows_html_str = "\n".join(rows_html)
+    return f"""\
+<section class="board-section" id="leaderboard">
+  <div class="board-header">🏆 Main Leaderboard</div>
+  <div class="board-body">
+    <div class="results-table">
+      <table>
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Algorithm</th>
+            <th>Stage</th>
+            <th>Runs</th>
+            <th>Total Games</th>
+            <th>Avg Score</th>
+            <th>Median</th>
+            <th>P90</th>
+            <th>Max Score</th>
+            <th>Best Tile</th>
+            <th>Win Rate</th>
+            <th>Avg Moves</th>
+            <th>Avg Duration</th>
+          </tr>
+        </thead>
+        <tbody>
+{rows_html_str}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>"""
+
+
+def _stability_section(rows_data: list[dict]) -> str:
+    """Build the stability board table."""
+    multi_run_rows = [r for r in rows_data if r["runs"] >= 2]
+    if not multi_run_rows:
+        return ""
+
+    rows_html: list[str] = []
+    for r in multi_run_rows:
+        rows_html.append(
+            "<tr>"
+            f"<td><strong>{html.escape(r['name'])}</strong></td>"
+            f"<td>{r['runs']}</td>"
+            f"<td>{r['mean_avg_score']:,.0f}</td>"
+            f"<td>{r['std_avg_score']:,.0f}</td>"
+            f"<td>{r['mean_median_score']:,.0f}</td>"
+            f"<td>{r['mean_p90_score']:,.0f}</td>"
+            "</tr>"
+        )
+
+    rows_html_str = "\n".join(rows_html)
+    return f"""\
+<section class="board-section" id="stability">
+  <div class="board-header">📈 Stability Board</div>
+  <div class="board-body">
+    <div class="results-table">
+      <table>
+        <thead>
+          <tr>
+            <th>Algorithm</th>
+            <th>Runs</th>
+            <th>Mean Avg Score</th>
+            <th>Std Avg Score</th>
+            <th>Mean Median</th>
+            <th>Mean P90</th>
+          </tr>
+        </thead>
+        <tbody>
+{rows_html_str}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>"""
+
+
+def _efficiency_section(rows_data: list[dict]) -> str:
+    """Build the efficiency board table."""
+    if not rows_data:
+        return ""
+
+    rows_html: list[str] = []
+    for r in rows_data:
+        gps = f"{r['games_per_second']:.2f}" if r["games_per_second"] > 0 else "—"
+        rows_html.append(
+            "<tr>"
+            f"<td><strong>{html.escape(r['name'])}</strong></td>"
+            f"<td>{r['avg_score']:,.0f}</td>"
+            f"<td>{r['avg_duration']:.2f}s</td>"
+            f"<td>{gps}</td>"
+            "</tr>"
+        )
+
+    rows_html_str = "\n".join(rows_html)
+    return f"""\
+<section class="board-section" id="efficiency">
+  <div class="board-header">⚡ Efficiency Board</div>
+  <div class="board-body">
+    <div class="results-table">
+      <table>
+        <thead>
+          <tr>
+            <th>Algorithm</th>
+            <th>Avg Score</th>
+            <th>Avg Duration</th>
+            <th>Games / Second</th>
+          </tr>
+        </thead>
+        <tbody>
+{rows_html_str}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>"""
+
+
+# ---------------------------------------------------------------------------
+# Global comparison chart generators
+# ---------------------------------------------------------------------------
+
+_CHART_COLORS = ["#f59563", "#edc22e", "#8ec07c", "#83a598", "#d3869b"]
+
+
+def _avg_median_p90_chart_src(rows_data: list[dict]) -> str | None:
+    """Grouped bar chart: avg, median, P90 per algorithm."""
+    if not rows_data:
+        return None
+    try:
+        import numpy as np  # already available via pandas
+
+        names = [r["name"] for r in rows_data]
+        avgs = [r["avg_score"] for r in rows_data]
+        medians = [r["median_score"] for r in rows_data]
+        p90s = [r["p90_score"] for r in rows_data]
+
+        x = np.arange(len(names))
+        width = 0.25
+
+        fig, ax = plt.subplots(figsize=(max(5, len(names) * 1.8 + 1), 4))
+        fig.patch.set_facecolor("#faf8ef")
+        ax.set_facecolor("#faf8ef")
+
+        ax.bar(x - width, avgs, width, label="Avg", color="#f59563", edgecolor="white")
+        ax.bar(x, medians, width, label="Median", color="#edc22e", edgecolor="white")
+        ax.bar(x + width, p90s, width, label="P90", color="#8ec07c", edgecolor="white")
+
+        ax.set_xticks(x)
+        ax.set_xticklabels(names, fontsize=8, color="#776e65")
+        ax.set_title("Score Comparison (Avg / Median / P90)", fontsize=10, color="#776e65")
+        ax.set_ylabel("Score", fontsize=8, color="#776e65")
+        ax.tick_params(colors="#776e65", labelsize=7)
+        ax.legend(fontsize=7, framealpha=0.6)
+        ax.yaxis.set_major_formatter(ticker.FuncFormatter(lambda v, _: f"{v:,.0f}"))
+        for spine in ax.spines.values():
+            spine.set_edgecolor("#d3c4b4")
+        plt.tight_layout(pad=0.5)
+        return _fig_to_data_uri(fig)
+    except Exception:
+        return None
+
+
+def _global_score_dist_chart_src(algo_dirs: list[Path]) -> str | None:
+    """Overlaid score-distribution histograms for all algorithms."""
+    algo_scores: dict[str, list[float]] = {}
+    for d in algo_dirs:
+        run_dirs = sorted(
+            rd for rd in d.iterdir()
+            if rd.is_dir() and rd.name.startswith("run_")
+        ) if d.exists() else []
+        frames: list[pd.DataFrame] = []
+        for rd in run_dirs:
+            try:
+                frames.append(pd.read_csv(rd / "results.csv"))
+            except Exception:
+                continue
+        if not frames:
+            continue
+        df_all = pd.concat(frames, ignore_index=True)
+        if not df_all.empty and "score" in df_all.columns:
+            algo_scores[d.name] = df_all["score"].tolist()
+
+    if not algo_scores:
+        return None
+    try:
+        fig, ax = plt.subplots(figsize=(6, 4))
+        fig.patch.set_facecolor("#faf8ef")
+        ax.set_facecolor("#faf8ef")
+
+        for i, (name, scores) in enumerate(algo_scores.items()):
+            ax.hist(
+                scores, bins=20, alpha=0.6,
+                label=name, color=_CHART_COLORS[i % len(_CHART_COLORS)],
+                edgecolor="white",
+            )
+
+        ax.set_title("Score Distribution", fontsize=10, color="#776e65")
+        ax.set_xlabel("Score", fontsize=8, color="#776e65")
+        ax.set_ylabel("Games", fontsize=8, color="#776e65")
+        ax.tick_params(colors="#776e65", labelsize=7)
+        if len(algo_scores) > 1:
+            ax.legend(fontsize=7, framealpha=0.6)
+        ax.xaxis.set_major_formatter(ticker.FuncFormatter(lambda v, _: f"{v:,.0f}"))
+        for spine in ax.spines.values():
+            spine.set_edgecolor("#d3c4b4")
+        plt.tight_layout(pad=0.5)
+        return _fig_to_data_uri(fig)
+    except Exception:
+        return None
+
+
+def _global_best_tile_chart_src(rows_data: list[dict]) -> str | None:
+    """Best-tile bar chart comparing all algorithms."""
+    if not rows_data:
+        return None
+    try:
+        names = [r["name"] for r in rows_data]
+        best_tiles = [r["best_tile"] for r in rows_data]
+        bar_colors = [
+            _TILE_COLORS.get(t, ("#cdc1b4", "#776e65"))[0] for t in best_tiles
+        ]
+
+        fig, ax = plt.subplots(figsize=(max(4, len(names) * 0.9 + 1), 3))
+        fig.patch.set_facecolor("#faf8ef")
+        ax.set_facecolor("#faf8ef")
+        bars = ax.bar(names, best_tiles, color=bar_colors, edgecolor="white", linewidth=0.8)
+        ax.set_title("Best Tile by Algorithm", fontsize=10, color="#776e65")
+        ax.set_xlabel("Algorithm", fontsize=8, color="#776e65")
+        ax.set_ylabel("Best Tile", fontsize=8, color="#776e65")
+        ax.tick_params(colors="#776e65", labelsize=7)
+        top = max(best_tiles)
+        for bar, val in zip(bars, best_tiles):
+            ax.text(
+                bar.get_x() + bar.get_width() / 2,
+                bar.get_height() + top * 0.01,
+                str(val), ha="center", va="bottom", fontsize=8, color="#776e65",
+            )
+        for spine in ax.spines.values():
+            spine.set_edgecolor("#d3c4b4")
+        plt.tight_layout(pad=0.5)
+        return _fig_to_data_uri(fig)
+    except Exception:
+        return None
+
+
+def _global_run_stability_chart_src(algo_dirs: list[Path]) -> str | None:
+    """Run-stability line chart with one line per algorithm (needs ≥ 2 runs each)."""
+    algo_run_avgs: dict[str, list[float]] = {}
+    for d in algo_dirs:
+        run_dirs = sorted(
+            rd for rd in d.iterdir()
+            if rd.is_dir() and rd.name.startswith("run_")
+        ) if d.exists() else []
+        avgs: list[float] = []
+        for rd in run_dirs:
+            try:
+                df = pd.read_csv(rd / "results.csv")
+                if not df.empty and "score" in df.columns:
+                    avgs.append(float(df["score"].mean()))
+            except Exception:
+                continue
+        if len(avgs) >= 2:
+            algo_run_avgs[d.name] = avgs
+
+    if not algo_run_avgs:
+        return None
+    try:
+        max_runs = max(len(v) for v in algo_run_avgs.values())
+        fig, ax = plt.subplots(figsize=(max(4, max_runs * 0.9 + 1), 3))
+        fig.patch.set_facecolor("#faf8ef")
+        ax.set_facecolor("#faf8ef")
+
+        for i, (name, avgs) in enumerate(algo_run_avgs.items()):
+            ax.plot(
+                range(1, len(avgs) + 1), avgs,
+                marker="o", color=_CHART_COLORS[i % len(_CHART_COLORS)],
+                linewidth=2, markersize=5, label=name,
+            )
+
+        ax.set_title("Run Stability (Avg Score per Run)", fontsize=10, color="#776e65")
+        ax.set_xlabel("Run #", fontsize=8, color="#776e65")
+        ax.set_ylabel("Avg Score", fontsize=8, color="#776e65")
+        ax.yaxis.set_major_formatter(ticker.FuncFormatter(lambda v, _: f"{v:,.0f}"))
+        ax.tick_params(colors="#776e65", labelsize=7)
+        ax.legend(fontsize=7, framealpha=0.6)
+        for spine in ax.spines.values():
+            spine.set_edgecolor("#d3c4b4")
+        plt.tight_layout(pad=0.5)
+        return _fig_to_data_uri(fig)
+    except Exception:
+        return None
+
+
+def _global_comparison_charts(rows_data: list[dict], algo_dirs: list[Path]) -> str:
+    """Build the global comparison charts section."""
+    charts: list[str] = []
+
+    src = _avg_median_p90_chart_src(rows_data)
+    if src:
+        charts.append(
+            f'<div class="global-chart-card">'
+            f'<div class="chart-title">Avg / Median / P90</div>'
+            f'<img src="{src}" alt="Avg/Median/P90 comparison chart">'
+            f"</div>"
+        )
+
+    src = _global_score_dist_chart_src(algo_dirs)
+    if src:
+        charts.append(
+            f'<div class="global-chart-card">'
+            f'<div class="chart-title">Score Distribution</div>'
+            f'<img src="{src}" alt="Score distribution histogram">'
+            f"</div>"
+        )
+
+    src = _global_best_tile_chart_src(rows_data)
+    if src:
+        charts.append(
+            f'<div class="global-chart-card">'
+            f'<div class="chart-title">Best Tile by Algorithm</div>'
+            f'<img src="{src}" alt="Best tile distribution chart">'
+            f"</div>"
+        )
+
+    src = _global_run_stability_chart_src(algo_dirs)
+    if src:
+        charts.append(
+            f'<div class="global-chart-card">'
+            f'<div class="chart-title">Run Stability</div>'
+            f'<img src="{src}" alt="Global run stability chart">'
+            f"</div>"
+        )
+
+    if not charts:
+        return ""
+
+    charts_html = "\n".join(charts)
+    return f"""\
+<section class="board-section" id="comparison-charts">
+  <div class="board-header">📊 Comparison Charts</div>
+  <div class="board-body">
+    <div class="global-charts-grid">
+{charts_html}
+    </div>
+  </div>
+</section>"""
+
+
+# ---------------------------------------------------------------------------
+# Run metadata box
+# ---------------------------------------------------------------------------
+
+def _run_metadata_box(run_dir: Path) -> str:
+    """Build a metadata box for *run_dir* using ``metrics.json``, if present."""
+    meta_path = run_dir / "metrics.json"
+    if not meta_path.exists():
+        return ""
+    try:
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    except Exception:
+        return ""
+
+    items = [
+        ("Algorithm Version", meta.get("algorithm_version", "—")),
+        ("Mode", meta.get("mode", "—")),
+        ("Games", str(meta.get("games", "—"))),
+        ("Parallel Workers", str(meta.get("parallel_workers", "—"))),
+        ("Timestamp", meta.get("timestamp", "—")),
+        ("Git Commit", meta.get("git_commit", "—")),
+    ]
+
+    items_html = "\n".join(
+        f'<div class="run-meta-item">'
+        f'<div class="meta-key">{html.escape(k)}</div>'
+        f'<div class="meta-val">{html.escape(str(v))}</div>'
+        f"</div>"
+        for k, v in items
+    )
+    return f'<div class="run-meta-box">{items_html}</div>'
+
+
 def _stats_grid(df: pd.DataFrame) -> str:
     """Aggregate stats cards computed across *all* stored runs."""
     avg_score = df["score"].mean()
@@ -633,6 +1321,7 @@ def _run_accordion_item(
     )
 
     table_html = _results_table(df)
+    meta_html = _run_metadata_box(run_dir)
 
     open_attr = " open" if is_latest else ""
 
@@ -644,6 +1333,7 @@ def _run_accordion_item(
     {chips_html}
   </summary>
   <div class="run-body">
+    {meta_html}
     {chart_html}
     {table_html}
   </div>
@@ -734,19 +1424,33 @@ def _algo_section(algo_name: str, algo_dir: Path) -> str:
 </section>"""
 
 
-def _algo_nav(algo_dirs: list[Path]) -> str:
-    """Build the sticky algorithm navigation bar."""
+def _algo_nav(algo_dirs: list[Path], has_leaderboard: bool = False) -> str:
+    """Build the sticky navigation bar with global-section and per-algorithm links."""
     if not algo_dirs:
         return ""
-    links = "\n    ".join(
+
+    global_links: list[str] = []
+    if has_leaderboard:
+        for anchor, label in [
+            ("leaderboard", "🏆 Leaderboard"),
+            ("stability", "📈 Stability"),
+            ("efficiency", "⚡ Efficiency"),
+            ("comparison-charts", "📊 Charts"),
+        ]:
+            global_links.append(
+                f'<a href="#{anchor}"><span class="nav-dot"></span>{label}</a>'
+            )
+
+    algo_links = "\n    ".join(
         f'<a href="#algo-{html.escape(d.name.lower().replace(" ", "-"))}">'
         f'<span class="nav-dot"></span>{html.escape(d.name)}</a>'
         for d in algo_dirs
     )
+    all_links = "\n    ".join(global_links) + ("\n    " if global_links else "") + algo_links
     return f"""\
 <nav class="algo-nav">
   <span class="nav-label">Jump to</span>
-    {links}
+    {all_links}
 </nav>"""
 
 
@@ -854,10 +1558,13 @@ def generate_html_report(
     folder (matching the directory layout created by ``main.py``).
 
     The page includes:
-    * A sticky navigation bar linking to each algorithm's section
-    * Per-algorithm aggregate stats cards
-    * A run-history accordion showing every stored run with its chart and
-      per-game results table; the most recent run is pre-expanded
+    * A sticky navigation bar linking to global sections and each algorithm
+    * Hero summary cards (best avg score, best tile, most stable, fastest)
+    * Main leaderboard table sorted by avg_score
+    * Stability board table (algorithms with multiple runs)
+    * Efficiency board table
+    * Comparison charts (avg/median/p90, score distribution, best tile, run stability)
+    * Per-algorithm aggregate stats cards and run-history accordion
 
     Parameters
     ----------
@@ -878,8 +1585,16 @@ def generate_html_report(
         p for p in results_dir.iterdir() if p.is_dir()
     ) if results_dir.exists() else []
 
-    nav_html = _algo_nav(algo_dirs)
-    comparison_html = _comparison_section(algo_dirs)
+    # Collect all aggregate data once
+    leaderboard_data = _collect_leaderboard_data(algo_dirs)
+    has_leaderboard = bool(leaderboard_data)
+
+    nav_html = _algo_nav(algo_dirs, has_leaderboard=has_leaderboard)
+    hero_html = _hero_section(leaderboard_data)
+    leaderboard_html = _leaderboard_section(leaderboard_data)
+    stability_html = _stability_section(leaderboard_data)
+    efficiency_html = _efficiency_section(leaderboard_data)
+    comparison_charts_html = _global_comparison_charts(leaderboard_data, algo_dirs)
     sections_html = "\n".join(_algo_section(d.name, d) for d in algo_dirs)
 
     if not sections_html.strip():
@@ -910,7 +1625,11 @@ def generate_html_report(
 </header>
 {nav_html}
 <main>
-{comparison_html}
+{hero_html}
+{leaderboard_html}
+{stability_html}
+{efficiency_html}
+{comparison_charts_html}
 {sections_html}
 </main>
 <footer>pw2048 · Auto-generated results dashboard</footer>
