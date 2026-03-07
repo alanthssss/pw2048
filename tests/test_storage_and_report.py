@@ -413,6 +413,98 @@ class TestGenerateHtmlReport:
         assert "#edc53f" in content  # 1024-tile background from game palette
         assert ">1024<" in content
 
+    # ------------------------------------------------------------------
+    # Algorithm type badge tests
+    # ------------------------------------------------------------------
+
+    def test_leaderboard_has_type_column(self, tmp_path):
+        """Main Leaderboard must include a 'Type' column header."""
+        results_dir = tmp_path / "results"
+        for algo in ("Random", "Expectimax"):
+            d = results_dir / algo
+            d.mkdir(parents=True)
+            self._make_csv(d, "20260307_120000")
+
+        report = generate_html_report(results_dir, tmp_path / "index.html")
+        content = report.read_text(encoding="utf-8")
+        # The leaderboard section must contain a Type header
+        assert "Main Leaderboard" in content
+        assert ">Type<" in content
+
+    def test_baseline_algorithms_tagged_as_baseline(self, tmp_path):
+        """Random, Greedy, Heuristic must carry the Baseline type badge."""
+        results_dir = tmp_path / "results"
+        for algo in ("Random", "Greedy", "Heuristic"):
+            d = results_dir / algo
+            d.mkdir(parents=True)
+            self._make_csv(d, "20260307_120000")
+
+        report = generate_html_report(results_dir, tmp_path / "index.html")
+        content = report.read_text(encoding="utf-8")
+        assert "algo-type-baseline" in content
+        assert ">Baseline<" in content
+        # No Search algorithms present — the Search badge must not be rendered
+        assert ">Search<" not in content
+
+    def test_search_algorithms_tagged_as_search(self, tmp_path):
+        """Expectimax and MCTS must carry the Search type badge."""
+        results_dir = tmp_path / "results"
+        for algo in ("Expectimax", "MCTS"):
+            d = results_dir / algo
+            d.mkdir(parents=True)
+            self._make_csv(d, "20260307_120000")
+
+        report = generate_html_report(results_dir, tmp_path / "index.html")
+        content = report.read_text(encoding="utf-8")
+        assert "algo-type-search" in content
+        assert ">Search<" in content
+        # No Baseline algorithms present — the Baseline badge must not be rendered
+        assert ">Baseline<" not in content
+
+    def test_mixed_algorithms_show_both_type_badges(self, tmp_path):
+        """When both Baseline and Search algorithms are present, both badges appear."""
+        results_dir = tmp_path / "results"
+        for algo in ("Random", "Expectimax"):
+            d = results_dir / algo
+            d.mkdir(parents=True)
+            self._make_csv(d, "20260307_120000")
+
+        report = generate_html_report(results_dir, tmp_path / "index.html")
+        content = report.read_text(encoding="utf-8")
+        assert "algo-type-baseline" in content
+        assert "algo-type-search" in content
+        assert "Baseline" in content
+        assert "Search" in content
+
+    def test_efficiency_board_has_type_column(self, tmp_path):
+        """Efficiency Board must include a 'Type' column header."""
+        results_dir = tmp_path / "results"
+        d = results_dir / "Random"
+        d.mkdir(parents=True)
+        self._make_csv(d, "20260307_120000")
+
+        report = generate_html_report(results_dir, tmp_path / "index.html")
+        content = report.read_text(encoding="utf-8")
+        assert "Efficiency Board" in content
+        assert ">Type<" in content
+
+    def test_type_badge_helper_categorises_correctly(self):
+        """Unit test for the _algo_category helper."""
+        from src.report import _algo_category
+
+        # Baselines (case-insensitive)
+        assert _algo_category("Random") == "Baseline"
+        assert _algo_category("Greedy") == "Baseline"
+        assert _algo_category("Heuristic") == "Baseline"
+        assert _algo_category("random") == "Baseline"
+        # Search algorithms (case-insensitive)
+        assert _algo_category("Expectimax") == "Search"
+        assert _algo_category("MCTS") == "Search"
+        assert _algo_category("expectimax") == "Search"
+        assert _algo_category("mcts") == "Search"
+        # Unknown / future algorithms default to Baseline
+        assert _algo_category("MyNewAlgo") == "Baseline"
+
 
 # ---------------------------------------------------------------------------
 # --parallel argument parsing

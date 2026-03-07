@@ -320,6 +320,23 @@ def _stage_badge(stage: str) -> str:
     return f'<span class="stage-badge {cls}">{html.escape(stage)}</span>'
 
 
+# Algorithms classified by family.  Names are matched case-insensitively
+# against the directory name (which mirrors each algorithm's ``name`` attr).
+_SEARCH_ALGOS: frozenset[str] = frozenset({"expectimax", "mcts"})
+
+
+def _algo_category(name: str) -> str:
+    """Return ``"Search"`` for tree-search algorithms, ``"Baseline"`` otherwise."""
+    return "Search" if name.lower() in _SEARCH_ALGOS else "Baseline"
+
+
+def _algo_type_badge(name: str) -> str:
+    """Return an HTML algorithm-type badge element (Baseline or Search)."""
+    category = _algo_category(name)
+    cls = f"algo-type-{category.lower()}"
+    return f'<span class="algo-type-badge {cls}">{html.escape(category)}</span>'
+
+
 def _hero_section(rows_data: list[dict]) -> str:
     """Build the top hero summary cards (best avg, best tile, most stable, fastest)."""
     if not rows_data:
@@ -381,6 +398,7 @@ def _leaderboard_section(rows_data: list[dict]) -> str:
             "<tr>"
             f"<td{rank_cls}>{i}</td>"
             f"<td><strong>{html.escape(r['name'])}</strong></td>"
+            f"<td>{_algo_type_badge(r['name'])}</td>"
             f"<td>{_stage_badge(r['stage'])}</td>"
             f"<td>{r['runs']}</td>"
             f"<td>{r['total_games']:,}</td>"
@@ -406,6 +424,7 @@ def _leaderboard_section(rows_data: list[dict]) -> str:
           <tr>
             <th>#</th>
             <th>Algorithm</th>
+            <th>Type</th>
             <th>Stage</th>
             <th>Runs</th>
             <th>Total Games</th>
@@ -439,6 +458,7 @@ def _stability_section(rows_data: list[dict]) -> str:
         rows_html.append(
             "<tr>"
             f"<td><strong>{html.escape(r['name'])}</strong></td>"
+            f"<td>{_algo_type_badge(r['name'])}</td>"
             f"<td>{r['runs']}</td>"
             f"<td>{r['mean_avg_score']:,.0f}</td>"
             f"<td>{r['std_avg_score']:,.0f}</td>"
@@ -457,6 +477,7 @@ def _stability_section(rows_data: list[dict]) -> str:
         <thead>
           <tr>
             <th>Algorithm</th>
+            <th>Type</th>
             <th>Runs</th>
             <th>Mean Avg Score</th>
             <th>Std Avg Score</th>
@@ -484,6 +505,7 @@ def _efficiency_section(rows_data: list[dict]) -> str:
         rows_html.append(
             "<tr>"
             f"<td><strong>{html.escape(r['name'])}</strong></td>"
+            f"<td>{_algo_type_badge(r['name'])}</td>"
             f"<td>{r['avg_score']:,.0f}</td>"
             f"<td>{r['avg_duration']:.2f}s</td>"
             f"<td>{gps}</td>"
@@ -500,6 +522,7 @@ def _efficiency_section(rows_data: list[dict]) -> str:
         <thead>
           <tr>
             <th>Algorithm</th>
+            <th>Type</th>
             <th>Avg Score</th>
             <th>Avg Duration</th>
             <th>Games / Second</th>
@@ -1092,6 +1115,7 @@ def _comparison_section(algo_dirs: list[Path]) -> str:
         rows_html.append(
             "<tr>"
             f"<td class=\"cmp-algo\">{html.escape(r['name'])}</td>"
+            f"<td>{_algo_type_badge(r['name'])}</td>"
             + _cell(f"{r['total_games']}", False)
             + _cell(f"{r['avg_score']:,.0f}",    r["avg_score"]    == best_avg)
             + _cell(f"{r['median_score']:,.0f}", r["median_score"] == best_median)
@@ -1112,6 +1136,7 @@ def _comparison_section(algo_dirs: list[Path]) -> str:
         <thead>
           <tr>
             <th>Algorithm</th>
+            <th>Type</th>
             <th>Games</th>
             <th>Avg</th>
             <th>Median</th>

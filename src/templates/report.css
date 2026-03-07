@@ -395,6 +395,20 @@ footer {
 .stage-dev       { background: $nav_bg; color: $nav_fg; }
 .stage-custom    { background: $card_bg; color: $text_dark; }
 
+/* ── Algorithm type badge ────────────────────────────────────────── */
+.algo-type-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 0.72rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .05em;
+    white-space: nowrap;
+}
+.algo-type-baseline { background: #83a598; color: white; }
+.algo-type-search   { background: #d3869b; color: white; }
+
 /* ── Rank cells ──────────────────────────────────────────────────── */
 .rank-1 { font-weight: 700; color: $card_accent; }
 .rank-2 { font-weight: 700; color: $header_bg; }
