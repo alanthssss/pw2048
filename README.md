@@ -2,6 +2,12 @@
 
 Automate the [2048 game](https://play2048.co/) using [Playwright](https://playwright.dev/python/) and collect fancy data visualizations of each algorithm's performance.
 
+## Screenshots
+
+| 2048 Game | Web Launcher |
+|:---------:|:------------:|
+| ![2048 game launch page](https://github.com/user-attachments/assets/971b6d73-36f0-4d47-b9da-0c27a9c3b5f2) | ![pw2048 Web Launcher](https://github.com/user-attachments/assets/08d9b84a-8180-475b-ae71-63b753c0d55a) |
+
 ## At a Glance
 
 | Field | Value |
@@ -212,7 +218,7 @@ in your default browser automatically:
 The form stays open until you click **Launch ▶**, at which point it returns a
 confirmation page, shuts the server down, and starts the run in your terminal.
 
-![pw2048 Web Launcher](https://github.com/user-attachments/assets/f076e497-a0a0-4649-903f-f20b83df5a49)
+![pw2048 Web Launcher](https://github.com/user-attachments/assets/08d9b84a-8180-475b-ae71-63b753c0d55a)
 
 The web UI requires **no third-party packages** — it uses only the Python
 standard library (`http.server`, `threading`, `webbrowser`).
