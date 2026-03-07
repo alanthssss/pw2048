@@ -64,6 +64,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from src.algorithms.greedy_algo import GreedyAlgorithm
+from src.algorithms.heuristic_algo import HeuristicAlgorithm
 from src.algorithms.random_algo import RandomAlgorithm
 from src.runner import run_games
 from src.visualize import plot_results
@@ -71,6 +72,7 @@ from src.visualize import plot_results
 ALGORITHMS = {
     "random": RandomAlgorithm,
     "greedy": GreedyAlgorithm,
+    "heuristic": HeuristicAlgorithm,
 }
 
 _DEFAULT_KEEP = 10
