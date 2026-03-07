@@ -3,14 +3,39 @@
 from __future__ import annotations
 
 import pathlib
+import re
 import pytest
 from playwright.sync_api import sync_playwright
 
+from main import build_output_dir
 from src.algorithms.random_algo import RandomAlgorithm
 from src.game import Game2048, DIRECTIONS
 
 
 GAME_URL = (pathlib.Path(__file__).parent.parent / "game.html").as_uri()
+
+_TIMESTAMP_RE = re.compile(r"^\d{8}_\d{6}$")
+
+
+class TestBuildOutputDir:
+    def test_explicit_timestamp_produces_expected_path(self):
+        result = build_output_dir("results", "Random", timestamp="20260307_120000")
+        assert result == pathlib.Path("results") / "20260307_120000" / "Random"
+
+    def test_auto_timestamp_has_correct_format(self):
+        result = build_output_dir("results", "Random")
+        timestamp_part = result.parts[-2]
+        assert _TIMESTAMP_RE.match(timestamp_part), (
+            f"Expected YYYYMMDD_HHMMSS, got {timestamp_part!r}"
+        )
+
+    def test_algorithm_name_is_last_segment(self):
+        result = build_output_dir("results", "MyAlgo", timestamp="20260101_000000")
+        assert result.name == "MyAlgo"
+
+    def test_custom_base_directory(self):
+        result = build_output_dir("/tmp/custom", "Random", timestamp="20260307_120000")
+        assert result == pathlib.Path("/tmp/custom") / "20260307_120000" / "Random"
 
 
 @pytest.fixture(scope="module")
