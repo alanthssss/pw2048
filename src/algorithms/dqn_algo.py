@@ -826,6 +826,36 @@ class DQNAlgorithmV3(BaseAlgorithm):
 
         return chosen_dir
 
+    def predict(self, board: List[List[int]]) -> str:
+        """Return the greedy action without any exploration or buffer update.
+
+        Used by :class:`src.rl_trainer.EvalCallback` for deterministic
+        evaluation episodes.  Never touches the replay buffer, ε, or the step
+        counter.
+
+        Parameters
+        ----------
+        board : list[list[int]]
+            Current 4×4 board.
+
+        Returns
+        -------
+        str
+            The greedy direction selected by the Q-network (argmax over valid
+            actions, no ε-greedy randomness).
+        """
+        state = _encode_board_onehot(board)
+        valid_dirs = [
+            d for d in DIRECTIONS
+            if not _boards_equal(board, simulate_move(board, d)[0])
+        ]
+        if not valid_dirs:
+            valid_dirs = list(DIRECTIONS)
+        q_vals, *_ = self._q_net.forward(state)
+        valid_idx = [_DIR_INDEX[d] for d in valid_dirs]
+        best = valid_idx[int(np.argmax(q_vals[valid_idx]))]
+        return DIRECTIONS[best]
+
     # ------------------------------------------------------------------
     # Training
     # ------------------------------------------------------------------

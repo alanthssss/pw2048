@@ -938,6 +938,39 @@ class PPOAlgorithmV3(BaseAlgorithm):
 
         return DIRECTIONS[action]
 
+    def predict(self, board: List[List[int]]) -> str:
+        """Return the greedy (argmax) action without any buffer update.
+
+        Used by :class:`src.rl_trainer.EvalCallback` for deterministic
+        evaluation episodes.  Never writes to the rollout buffer, does not
+        update the previous-transition cache, and does not trigger a PPO
+        update.
+
+        Parameters
+        ----------
+        board : list[list[int]]
+            Current 4×4 board.
+
+        Returns
+        -------
+        str
+            The direction with the highest policy logit among valid moves
+            (i.e. the greedy/deterministic policy action).
+        """
+        state = _encode_board_onehot(board)
+        valid_dirs = [
+            d for d in DIRECTIONS
+            if not _boards_equal(board, simulate_move(board, d)[0])
+        ]
+        if not valid_dirs:
+            valid_dirs = list(DIRECTIONS)
+        logits, _, *_ = self._net.forward(state)
+        valid_idx = [_DIR_INDEX[d] for d in valid_dirs]
+        mask = np.full(_N_ACTIONS, -1e9, dtype=np.float32)
+        mask[valid_idx] = 0.0
+        best = int(np.argmax(logits + mask))
+        return DIRECTIONS[best]
+
     # ------------------------------------------------------------------
     # PPO update
     # ------------------------------------------------------------------

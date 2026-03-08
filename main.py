@@ -92,6 +92,24 @@ Examples
 
     # Combine with benchmark mode to run several sessions over multiple days:
     python main.py --algorithm dqn --mode benchmark --checkpoint-dir checkpoints --report
+
+    # --- 4-layer Env / Train / Eval / Play pipeline ---
+    # Step 1: Fast in-process training (10–50× faster than browser mode).
+    # --train-games runs the RLTrainer, --tensorboard-dir writes logs you can
+    # view with: tensorboard --logdir tb_logs/DQN-v3
+    python main.py --algorithm dqn --train-games 5000 \\
+                   --checkpoint-dir checkpoints \\
+                   --tensorboard-dir tb_logs \\
+                   --eval-freq 50 --n-eval-games 20
+
+    # Step 2: After training, benchmark in the browser (loads best checkpoint).
+    python main.py --algorithm dqn --games 50 --checkpoint-dir checkpoints --report
+
+    # Training only (skip browser benchmark with --games 0):
+    python main.py --algorithm dqn --train-games 10000 \\
+                   --checkpoint-dir checkpoints \\
+                   --tensorboard-dir tb_logs \\
+                   --games 0
 """
 
 from __future__ import annotations
@@ -517,6 +535,54 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         ),
     )
 
+    parser.add_argument(
+        "--train-games",
+        type=int,
+        default=None,
+        metavar="N",
+        help=(
+            "Run N games of fast in-process RL training (no browser) "
+            "using the Env / Train / Eval / Play pipeline.  "
+            "The algorithm trains 10–50× faster than the browser mode.  "
+            "After training the weights are saved to --checkpoint-dir "
+            "(if given) and the normal browser benchmark runs unless "
+            "--games 0 is also passed.  Only valid for learning algorithms "
+            "(dqn, ppo)."
+        ),
+    )
+    parser.add_argument(
+        "--eval-freq",
+        type=int,
+        default=50,
+        metavar="N",
+        help=(
+            "Run an EvalCallback evaluation every N training games during "
+            "--train-games mode (default: 50).  The best-scoring checkpoint "
+            "is saved to <checkpoint-dir>/best_checkpoint.npz."
+        ),
+    )
+    parser.add_argument(
+        "--n-eval-games",
+        type=int,
+        default=20,
+        metavar="N",
+        help=(
+            "Number of in-process evaluation games per EvalCallback round "
+            "during --train-games mode (default: 20)."
+        ),
+    )
+    parser.add_argument(
+        "--tensorboard-dir",
+        default=None,
+        metavar="DIR",
+        help=(
+            "Directory for TensorBoard event files and training_log.csv.  "
+            "Requires the tensorboard package (pip install tensorboard) for "
+            "the .tfevents format; CSV is always written regardless.  "
+            "Visualise with: tensorboard --logdir <DIR>"
+        ),
+    )
+
     argcomplete.autocomplete(parser)
     args = parser.parse_args(argv)
 
@@ -586,6 +652,58 @@ def main(argv: list[str] | None = None) -> None:
         algorithm = algo_cls(checkpoint_path=ckpt_path)
     else:
         algorithm = algo_cls()
+
+    # ------------------------------------------------------------------
+    # Fast in-process RL training (--train-games mode)
+    # ------------------------------------------------------------------
+    if args.train_games and getattr(algo_cls, "supports_checkpoint", False):
+        from src.rl_trainer import make_trainer
+
+        tb_dir = (
+            Path(args.tensorboard_dir) / algo_cls.name
+            if args.tensorboard_dir
+            else None
+        )
+        ckpt_dir_for_trainer = (
+            Path(args.checkpoint_dir) / algo_cls.name
+            if args.checkpoint_dir
+            else None
+        )
+
+        print(
+            f"\nFast in-process training: {args.train_games} game(s) with "
+            f"'{algorithm.name}'…"
+        )
+        if tb_dir:
+            print(f"  TensorBoard / CSV logs → {tb_dir}")
+        if ckpt_dir_for_trainer:
+            print(
+                f"  Checkpoint dir → {ckpt_dir_for_trainer}  "
+                f"(eval every {args.eval_freq} games, "
+                f"{args.n_eval_games} eval games)"
+            )
+        print()
+
+        trainer = make_trainer(
+            algorithm=algorithm,
+            checkpoint_dir=ckpt_dir_for_trainer,
+            tensorboard_dir=tb_dir,
+            eval_freq=args.eval_freq,
+            n_eval_games=args.n_eval_games,
+            verbose=True,
+        )
+        trainer.train(total_games=args.train_games)
+
+        # Reload the algorithm from the best checkpoint if it was saved.
+        if ckpt_dir_for_trainer is not None:
+            best_ckpt = ckpt_dir_for_trainer / "best_checkpoint.npz"
+            if best_ckpt.exists() and hasattr(algorithm, "load_checkpoint"):
+                print(f"\n  Loading best checkpoint → {best_ckpt}")
+                algorithm.load_checkpoint(best_ckpt)
+
+    # If --games 0 was explicitly requested, skip the browser benchmark.
+    if args.games == 0:
+        return
 
     # Migrate any pre-versioning result directories (e.g. MCTS/ → MCTS-v1/) so
     # the HTML report always shows clean, versioned algorithm names.
