@@ -30,7 +30,12 @@ _STYLE = Style(
 _console = Console()
 
 # These mirror the constants in main.py to avoid a circular import.
-_ALGORITHMS = ["random", "greedy", "heuristic", "expectimax", "mcts", "dqn", "ppo"]
+_ALGORITHMS = [
+    "random", "greedy", "heuristic", "expectimax",
+    "mcts-v1", "mcts-v2", "mcts",
+    "dqn-v1", "dqn-v2", "dqn",
+    "ppo-v1", "ppo-v2", "ppo",
+]
 _DEFAULT_KEEP = 10
 _DEFAULT_GAMES = 20
 _DEFAULT_RUNS = 1

@@ -617,7 +617,7 @@ class TestMCTSNode:
 
 class TestMCTSAlgorithm:
     def test_algorithm_name(self):
-        assert MCTSAlgorithm.name == "MCTS"
+        assert MCTSAlgorithm.name == "MCTS-v2"
 
     def test_choose_move_returns_valid_direction(self):
         algo = MCTSAlgorithm(n_iterations=20, seed=0)
@@ -731,7 +731,7 @@ class TestQNetwork:
 
 class TestDQNAlgorithm:
     def test_algorithm_name(self):
-        assert DQNAlgorithm.name == "DQN"
+        assert DQNAlgorithm.name == "DQN-v2"
 
     def test_choose_move_returns_valid_direction(self):
         algo = DQNAlgorithm(seed=0)
@@ -802,7 +802,7 @@ class TestDQNAlgorithm:
 
 class TestPPOAlgorithm:
     def test_algorithm_name(self):
-        assert PPOAlgorithm.name == "PPO"
+        assert PPOAlgorithm.name == "PPO-v2"
 
     def test_choose_move_returns_valid_direction(self):
         algo = PPOAlgorithm(seed=0)

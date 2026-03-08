@@ -10,7 +10,10 @@ Usage
                    [--keep N] [--report] [--parallel N]
                    [--s3-bucket BUCKET] [--s3-prefix PREFIX] [--s3-public]
 
-    Available algorithms: random, greedy, heuristic, expectimax, mcts, dqn, ppo
+    Available algorithms: random, greedy, heuristic, expectimax,
+                          mcts-v1, mcts-v2, mcts,
+                          dqn-v1, dqn-v2, dqn,
+                          ppo-v1, ppo-v2, ppo
 
     Results are saved under a per-run subdirectory, e.g.::
 
@@ -78,24 +81,33 @@ from pathlib import Path
 
 import argcomplete
 
-from src.algorithms.dqn_algo import DQNAlgorithm
+from src.algorithms.dqn_algo import DQNAlgorithmV1, DQNAlgorithmV2
 from src.algorithms.expectimax_algo import ExpectimaxAlgorithm
 from src.algorithms.greedy_algo import GreedyAlgorithm
 from src.algorithms.heuristic_algo import HeuristicAlgorithm
-from src.algorithms.mcts_algo import MCTSAlgorithm
-from src.algorithms.ppo_algo import PPOAlgorithm
+from src.algorithms.mcts_algo import MCTSAlgorithmV1, MCTSAlgorithmV2
+from src.algorithms.ppo_algo import PPOAlgorithmV1, PPOAlgorithmV2
 from src.algorithms.random_algo import RandomAlgorithm
 from src.runner import run_games
 from src.visualize import plot_results
 
 ALGORITHMS = {
-    "random": RandomAlgorithm,
-    "greedy": GreedyAlgorithm,
-    "heuristic": HeuristicAlgorithm,
+    "random":     RandomAlgorithm,
+    "greedy":     GreedyAlgorithm,
+    "heuristic":  HeuristicAlgorithm,
     "expectimax": ExpectimaxAlgorithm,
-    "mcts": MCTSAlgorithm,
-    "dqn": DQNAlgorithm,
-    "ppo": PPOAlgorithm,
+    # MCTS — both versions registered; "mcts" is an alias for the latest.
+    "mcts-v1":    MCTSAlgorithmV1,
+    "mcts-v2":    MCTSAlgorithmV2,
+    "mcts":       MCTSAlgorithmV2,
+    # DQN — both versions registered; "dqn" is an alias for the latest.
+    "dqn-v1":     DQNAlgorithmV1,
+    "dqn-v2":     DQNAlgorithmV2,
+    "dqn":        DQNAlgorithmV2,
+    # PPO — both versions registered; "ppo" is an alias for the latest.
+    "ppo-v1":     PPOAlgorithmV1,
+    "ppo-v2":     PPOAlgorithmV2,
+    "ppo":        PPOAlgorithmV2,
 }
 
 _DEFAULT_KEEP = 10

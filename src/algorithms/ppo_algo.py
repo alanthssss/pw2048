@@ -160,47 +160,233 @@ class _ActorCritic:
 
 
 # ---------------------------------------------------------------------------
-# PPO algorithm
+# PPO algorithm – version 1 (original PPO-Clip)
 # ---------------------------------------------------------------------------
 
-class PPOAlgorithm(BaseAlgorithm):
-    """Proximal Policy Optimization (PPO-Clip) reinforcement-learning algorithm for 2048.
+class PPOAlgorithmV1(BaseAlgorithm):
+    """Proximal Policy Optimization – version 1 (original PPO-Clip).
 
-    The agent collects a fixed-length rollout of ``update_freq`` steps and
-    then performs ``n_epochs`` passes of PPO updates over the collected data.
-
-    The board state is encoded as a 16-dimensional vector of normalised log₂
-    tile values.  At inference time, a probability distribution is computed
-    over valid moves only (invalid moves are masked with a large negative
-    logit), and an action is sampled from that distribution.
+    Collects a fixed-length rollout and performs ``n_epochs`` passes of
+    PPO-Clip updates.  Raw heuristic-delta rewards are used without any
+    normalisation; see :class:`PPOAlgorithmV2` for the EMA-normalised variant.
 
     Parameters
     ----------
     hidden_size:
-        Number of units in each shared hidden layer.
+        Number of units in each shared hidden layer (default 128).
     lr:
         Learning rate for SGD updates.
     gamma:
         Discount factor used in GAE advantage estimation.
     lam:
-        λ parameter for Generalized Advantage Estimation (GAE).  Higher
-        values reduce bias at the cost of higher variance.
+        λ parameter for Generalized Advantage Estimation (GAE).
     clip_eps:
-        PPO clipping parameter ε; constrains the policy update ratio to
-        ``[1 − ε, 1 + ε]``.
+        PPO clipping parameter ε.
     n_epochs:
-        Number of gradient-update epochs over the collected rollout.
+        Number of gradient-update epochs per rollout (default 4).
     update_freq:
-        Number of steps to collect before performing a PPO update.
+        Number of steps per rollout (default 256).
     entropy_coef:
-        Coefficient on the entropy bonus; encourages exploration.
+        Coefficient on the entropy bonus.
     value_coef:
-        Coefficient on the value-function loss term.
+        Coefficient on the value-function loss.
     seed:
         Optional RNG seed for reproducibility.
     """
 
-    name = "PPO"
+    name = "PPO-v1"
+    version = "v1"
+
+    def __init__(
+        self,
+        hidden_size: int = 128,
+        lr: float = 3e-4,
+        gamma: float = 0.99,
+        lam: float = 0.95,
+        clip_eps: float = 0.2,
+        n_epochs: int = 4,
+        update_freq: int = 256,
+        entropy_coef: float = 0.01,
+        value_coef: float = 0.5,
+        seed: Optional[int] = None,
+    ) -> None:
+        self._rng = random.Random(seed)
+        np_seed = seed if seed is not None else 42
+        self._np_rng = np.random.default_rng(np_seed)
+
+        self._net = _ActorCritic(_N_STATE, hidden_size, self._np_rng)
+
+        self._lr = lr
+        self._gamma = gamma
+        self._lam = lam
+        self._clip_eps = clip_eps
+        self._n_epochs = n_epochs
+        self._update_freq = update_freq
+        self._entropy_coef = entropy_coef
+        self._value_coef = value_coef
+
+        self._buf_states: list[np.ndarray] = []
+        self._buf_actions: list[int] = []
+        self._buf_log_probs: list[float] = []
+        self._buf_rewards: list[float] = []
+        self._buf_values: list[float] = []
+        self._buf_dones: list[float] = []
+
+        self._prev_state: Optional[np.ndarray] = None
+        self._prev_action: Optional[int] = None
+        self._prev_log_prob: Optional[float] = None
+        self._prev_value: Optional[float] = None
+        self._prev_board: Optional[List[List[int]]] = None
+
+    def choose_move(self, board: List[List[int]]) -> str:
+        """Return the next direction sampled from the PPO-v1 policy."""
+        state = _encode_board(board)
+        valid_dirs = [
+            d for d in DIRECTIONS
+            if not _boards_equal(board, simulate_move(board, d)[0])
+        ]
+        if not valid_dirs:
+            valid_dirs = list(DIRECTIONS)
+
+        if self._prev_state is not None:
+            # PPO-v1 uses the raw heuristic-delta reward with no further
+            # normalisation — the key difference from PPO-v2's EMA approach.
+            reward = _board_heuristic(board) - _board_heuristic(self._prev_board)  # type: ignore[arg-type]
+            done = float(len(valid_dirs) == 0)
+            self._buf_states.append(self._prev_state)
+            self._buf_actions.append(self._prev_action)          # type: ignore[arg-type]
+            self._buf_log_probs.append(self._prev_log_prob)      # type: ignore[arg-type]
+            self._buf_rewards.append(float(reward))
+            self._buf_values.append(self._prev_value)            # type: ignore[arg-type]
+            self._buf_dones.append(done)
+
+            if len(self._buf_states) >= self._update_freq:
+                _, next_val, *_ = self._net.forward(state)
+                self._ppo_update(float(next_val))
+                self._buf_states.clear()
+                self._buf_actions.clear()
+                self._buf_log_probs.clear()
+                self._buf_rewards.clear()
+                self._buf_values.clear()
+                self._buf_dones.clear()
+
+        logits, value, *_ = self._net.forward(state)
+        valid_idx = [_DIR_INDEX[d] for d in valid_dirs]
+        mask = np.full(_N_ACTIONS, -1e9, dtype=np.float32)
+        mask[valid_idx] = 0.0
+        probs = _softmax(logits + mask)
+
+        action = int(self._np_rng.choice(_N_ACTIONS, p=probs))
+        log_prob = float(np.log(probs[action] + 1e-8))
+
+        self._prev_state = state
+        self._prev_action = action
+        self._prev_log_prob = log_prob
+        self._prev_value = float(value)
+        self._prev_board = [row[:] for row in board]
+
+        return DIRECTIONS[action]
+
+    def _ppo_update(self, next_value: float) -> None:
+        """Run ``n_epochs`` PPO-Clip updates over the collected rollout."""
+        T = len(self._buf_states)
+        if T == 0:
+            return
+
+        states = np.array(self._buf_states, dtype=np.float32)
+        actions = np.array(self._buf_actions, dtype=np.int32)
+        old_log_probs = np.array(self._buf_log_probs, dtype=np.float32)
+        rewards = np.array(self._buf_rewards, dtype=np.float32)
+        values = np.array(self._buf_values, dtype=np.float32)
+        dones = np.array(self._buf_dones, dtype=np.float32)
+
+        advantages = np.zeros(T, dtype=np.float32)
+        gae = 0.0
+        for t in reversed(range(T)):
+            next_val = next_value if t == T - 1 else values[t + 1]
+            delta = rewards[t] + self._gamma * next_val * (1.0 - dones[t]) - values[t]
+            gae = delta + self._gamma * self._lam * (1.0 - dones[t]) * gae
+            advantages[t] = gae
+
+        returns = advantages + values
+        adv_std = advantages.std() + 1e-8
+        advantages = (advantages - advantages.mean()) / adv_std
+
+        for _ in range(self._n_epochs):
+            logits_b, values_b, h2_b, z2_b, h1_b, z1_b = self._net.forward(states)
+            probs_b = _softmax(logits_b)
+            log_probs_b = np.log(probs_b[np.arange(T), actions] + 1e-8)
+            entropy_b = -(probs_b * np.log(probs_b + 1e-8)).sum(axis=-1)
+            ratios = np.exp(log_probs_b - old_log_probs)
+            clip_ratios = np.clip(ratios, 1.0 - self._clip_eps, 1.0 + self._clip_eps)
+            policy_loss = -np.minimum(ratios * advantages, clip_ratios * advantages).mean()
+            value_loss = ((values_b - returns) ** 2).mean()
+            entropy_loss = -entropy_b.mean()
+            total_loss = policy_loss + self._value_coef * value_loss + self._entropy_coef * entropy_loss
+
+            dL_dlogits = probs_b.copy()
+            dL_dlogits[np.arange(T), actions] -= 1.0
+            pg_weights = np.where(
+                (ratios > 1.0 + self._clip_eps) | (ratios < 1.0 - self._clip_eps),
+                0.0, -advantages,
+            )
+            dL_dlogits = dL_dlogits * pg_weights[:, None] / T
+            dL_dlogits -= self._entropy_coef * (
+                np.eye(_N_ACTIONS)[actions] - probs_b
+            ) / T
+
+            dL_dvalue = 2.0 * self._value_coef * (values_b - returns) / T
+            dL_dh2 = dL_dlogits @ self._net.W_a.T + (dL_dvalue[:, None] * self._net.W_v.T)
+            dW_a = h2_b.T @ dL_dlogits
+            db_a = dL_dlogits.sum(axis=0)
+            dW_v = (h2_b * dL_dvalue[:, None]).sum(axis=0, keepdims=True).T
+            db_v = np.array([dL_dvalue.sum()])
+            dz2 = dL_dh2 * _relu_grad(z2_b)
+            dW2 = h1_b.T @ dz2
+            db2 = dz2.sum(axis=0)
+            dh1 = dz2 @ self._net.W2.T
+            dz1 = dh1 * _relu_grad(z1_b)
+            dW1 = states.T @ dz1
+            db1 = dz1.sum(axis=0)
+            self._net.sgd_update(dW1, db1, dW2, db2, dW_a, db_a, dW_v, db_v, self._lr)
+
+
+# ---------------------------------------------------------------------------
+# PPO algorithm – version 2 (PPO-Clip with EMA reward normalisation)
+# ---------------------------------------------------------------------------
+
+class PPOAlgorithmV2(BaseAlgorithm):
+    """Proximal Policy Optimization – version 2.
+
+    Improves on :class:`PPOAlgorithmV1` by normalising rewards with an
+    exponential moving-average estimate, using a wider hidden layer (256) and
+    more update epochs (8) for better sample efficiency.
+
+    Parameters
+    ----------
+    hidden_size:
+        Number of units in each shared hidden layer (default 256).
+    lr:
+        Learning rate for SGD updates.
+    gamma:
+        Discount factor used in GAE advantage estimation.
+    lam:
+        λ parameter for Generalized Advantage Estimation (GAE).
+    clip_eps:
+        PPO clipping parameter ε.
+    n_epochs:
+        Number of gradient-update epochs per rollout (default 8).
+    update_freq:
+        Number of steps per rollout (default 512).
+    entropy_coef:
+        Coefficient on the entropy bonus.
+    value_coef:
+        Coefficient on the value-function loss.
+    seed:
+        Optional RNG seed for reproducibility.
+    """
+
+    name = "PPO-v2"
     version = "v2"
 
     def __init__(
@@ -457,3 +643,11 @@ class PPOAlgorithm(BaseAlgorithm):
             db1 = dz1.sum(axis=0)                           # (hidden,)
 
             self._net.sgd_update(dW1, db1, dW2, db2, dW_a, db_a, dW_v, db_v, self._lr)
+
+
+# ---------------------------------------------------------------------------
+# Backward-compatible alias — PPOAlgorithm always points to the latest version.
+# ---------------------------------------------------------------------------
+
+PPOAlgorithm = PPOAlgorithmV2
+

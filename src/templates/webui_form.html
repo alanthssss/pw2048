@@ -153,9 +153,21 @@
         <option value="greedy">greedy</option>
         <option value="heuristic">heuristic</option>
         <option value="expectimax">expectimax</option>
-        <option value="mcts">mcts</option>
-        <option value="dqn">dqn</option>
-        <option value="ppo">ppo</option>
+        <optgroup label="MCTS">
+          <option value="mcts-v1">mcts-v1 (random rollout)</option>
+          <option value="mcts-v2">mcts-v2 (greedy rollout)</option>
+          <option value="mcts">mcts (latest = v2)</option>
+        </optgroup>
+        <optgroup label="DQN">
+          <option value="dqn-v1">dqn-v1 (standard DQN)</option>
+          <option value="dqn-v2">dqn-v2 (Double DQN)</option>
+          <option value="dqn">dqn (latest = v2)</option>
+        </optgroup>
+        <optgroup label="PPO">
+          <option value="ppo-v1">ppo-v1 (raw rewards)</option>
+          <option value="ppo-v2">ppo-v2 (EMA normalised)</option>
+          <option value="ppo">ppo (latest = v2)</option>
+        </optgroup>
       </select>
     </div>
 

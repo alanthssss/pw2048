@@ -151,18 +151,16 @@ class _QNetwork:
 
 
 # ---------------------------------------------------------------------------
-# DQN algorithm
+# DQN algorithm – version 1 (standard DQN)
 # ---------------------------------------------------------------------------
 
-class DQNAlgorithm(BaseAlgorithm):
-    """Deep Q-Network (DQN) reinforcement-learning algorithm for 2048.
+class DQNAlgorithmV1(BaseAlgorithm):
+    """Deep Q-Network – version 1 (standard DQN with vanilla Bellman backup).
 
-    The agent maintains an online Q-network and a lagged target network.
-    Experiences ``(state, action, reward, next_state, done)`` are stored in a
-    replay buffer and sampled uniformly for mini-batch Q-learning updates.
-
-    The board state is encoded as a 16-dimensional vector of normalised log₂
-    tile values.  Actions are masked to valid moves at inference time.
+    Uses a single target-network forward pass to compute the TD target:
+    ``Q_target(s, a) = r + γ · max_a' Q_target(s', a') · (1 − done)``.
+    This can overestimate Q-values; see :class:`DQNAlgorithmV2` for the
+    Double-DQN fix.
 
     Parameters
     ----------
@@ -188,7 +186,155 @@ class DQNAlgorithm(BaseAlgorithm):
         Optional RNG seed for reproducibility.
     """
 
-    name = "DQN"
+    name = "DQN-v1"
+    version = "v1"
+
+    def __init__(
+        self,
+        hidden_size: int = 128,
+        lr: float = 1e-3,
+        gamma: float = 0.99,
+        epsilon_start: float = 1.0,
+        epsilon_end: float = 0.05,
+        epsilon_decay: float = 0.9995,
+        buffer_size: int = 10_000,
+        batch_size: int = 64,
+        target_update_freq: int = 200,
+        seed: Optional[int] = None,
+    ) -> None:
+        self._rng = random.Random(seed)
+        np_seed = seed if seed is not None else 42
+        self._np_rng = np.random.default_rng(np_seed)
+
+        self._q_net = _QNetwork(_N_STATE, hidden_size, _N_ACTIONS, self._np_rng)
+        self._target_net = _QNetwork(_N_STATE, hidden_size, _N_ACTIONS, self._np_rng)
+        self._target_net.copy_weights(self._q_net)
+
+        self._lr = lr
+        self._gamma = gamma
+        self._epsilon = float(epsilon_start)
+        self._epsilon_end = float(epsilon_end)
+        self._epsilon_decay = float(epsilon_decay)
+        self._batch_size = batch_size
+        self._target_update_freq = target_update_freq
+
+        self._buffer: deque = deque(maxlen=buffer_size)
+        self._step: int = 0
+
+        self._prev_state: Optional[np.ndarray] = None
+        self._prev_action: Optional[int] = None
+        self._prev_board: Optional[List[List[int]]] = None
+
+    def choose_move(self, board: List[List[int]]) -> str:
+        """Return the next direction using the ε-greedy DQN policy."""
+        state = _encode_board(board)
+        valid_dirs = [
+            d for d in DIRECTIONS
+            if not _boards_equal(board, simulate_move(board, d)[0])
+        ]
+        if not valid_dirs:
+            valid_dirs = list(DIRECTIONS)
+
+        if self._prev_state is not None:
+            reward = _board_heuristic(board) - _board_heuristic(self._prev_board)  # type: ignore[arg-type]
+            done = len(valid_dirs) == 0
+            self._buffer.append((
+                self._prev_state,
+                self._prev_action,
+                float(reward),
+                state.copy(),
+                float(done),
+            ))
+            if len(self._buffer) >= self._batch_size:
+                self._train_step()
+
+        if self._rng.random() < self._epsilon:
+            chosen_dir = self._rng.choice(valid_dirs)
+        else:
+            q_vals, *_ = self._q_net.forward(state)
+            valid_idx = [_DIR_INDEX[d] for d in valid_dirs]
+            best = valid_idx[int(np.argmax(q_vals[valid_idx]))]
+            chosen_dir = DIRECTIONS[best]
+
+        self._epsilon = max(self._epsilon_end, self._epsilon * self._epsilon_decay)
+        self._prev_state = state
+        self._prev_action = _DIR_INDEX[chosen_dir]
+        self._prev_board = [row[:] for row in board]
+        self._step += 1
+
+        if self._step % self._target_update_freq == 0:
+            self._target_net.copy_weights(self._q_net)
+
+        return chosen_dir
+
+    def _train_step(self) -> None:
+        """Standard DQN Bellman update using the target network."""
+        batch = self._rng.sample(list(self._buffer), self._batch_size)
+        S = np.array([e[0] for e in batch], dtype=np.float32)
+        A = np.array([e[1] for e in batch], dtype=np.int32)
+        R = np.array([e[2] for e in batch], dtype=np.float32)
+        S2 = np.array([e[3] for e in batch], dtype=np.float32)
+        D = np.array([e[4] for e in batch], dtype=np.float32)
+
+        # Standard DQN: max Q from target network.
+        next_q, *_ = self._target_net.forward(S2)
+        target_q = R + self._gamma * np.max(next_q, axis=1) * (1.0 - D)
+
+        q_out, h2, z2, h1, z1 = self._q_net.forward(S)
+        td = q_out[np.arange(self._batch_size), A] - target_q
+        dL_dq = np.zeros_like(q_out)
+        dL_dq[np.arange(self._batch_size), A] = (2.0 / self._batch_size) * td
+
+        dW3 = h2.T @ dL_dq
+        db3 = dL_dq.sum(axis=0)
+        dh2 = dL_dq @ self._q_net.W3.T
+        dz2 = dh2 * _relu_grad(z2)
+        dW2 = h1.T @ dz2
+        db2 = dz2.sum(axis=0)
+        dh1 = dz2 @ self._q_net.W2.T
+        dz1 = dh1 * _relu_grad(z1)
+        dW1 = S.T @ dz1
+        db1 = dz1.sum(axis=0)
+
+        self._q_net.sgd_update(dW1, db1, dW2, db2, dW3, db3, self._lr)
+
+
+# ---------------------------------------------------------------------------
+# DQN algorithm – version 2 (Double DQN)
+# ---------------------------------------------------------------------------
+
+class DQNAlgorithmV2(BaseAlgorithm):
+    """Deep Q-Network – version 2 (Double DQN).
+
+    Improvement over :class:`DQNAlgorithmV1`: uses the *online* network to
+    select the greedy next action and the *target* network to evaluate its
+    Q-value, which reduces the overestimation bias of standard DQN.
+
+    Parameters
+    ----------
+    hidden_size:
+        Number of units in each hidden layer (default 256, wider than v1).
+    lr:
+        Learning rate for SGD updates.
+    gamma:
+        Discount factor for future rewards.
+    epsilon_start:
+        Initial ε for ε-greedy exploration.
+    epsilon_end:
+        Minimum ε; exploration is never fully eliminated.
+    epsilon_decay:
+        Multiplicative decay applied to ε after each step.
+    buffer_size:
+        Maximum number of transitions in the replay buffer.
+    batch_size:
+        Number of transitions sampled per training step.
+    target_update_freq:
+        Number of steps between target-network weight copies.
+    seed:
+        Optional RNG seed for reproducibility.
+    """
+
+    name = "DQN-v2"
     version = "v2"
 
     def __init__(
@@ -346,3 +492,11 @@ class DQNAlgorithm(BaseAlgorithm):
         db1 = dz1.sum(axis=0)                       # (hidden,)
 
         self._q_net.sgd_update(dW1, db1, dW2, db2, dW3, db3, self._lr)
+
+
+# ---------------------------------------------------------------------------
+# Backward-compatible alias — DQNAlgorithm always points to the latest version.
+# ---------------------------------------------------------------------------
+
+DQNAlgorithm = DQNAlgorithmV2
+
