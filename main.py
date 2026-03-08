@@ -206,22 +206,18 @@ def write_run_metadata(
 
 
 def prune_local_results(output_dir: Path, keep_n: int) -> list[Path]:
-    """Delete old run directories, keeping only the latest *keep_n* runs per version.
+    """Delete old run directories, keeping only the latest *keep_n* runs.
 
     Each "run" is a subdirectory named ``run_<timestamp>`` under *output_dir*.
     Directories are sorted lexicographically (chronological order because the
-    timestamp prefix is ``YYYYMMDD_HHMMSS``).  Runs are grouped by the
-    ``algorithm_version`` field in their ``metrics.json``; the *keep_n* most
-    recent directories **within each version group** are retained so that old
-    results are preserved when the algorithm is upgraded.
+    timestamp prefix is ``YYYYMMDD_HHMMSS``).
 
     Parameters
     ----------
     output_dir:
         Algorithm-scoped results directory (e.g. ``results/Random/``).
     keep_n:
-        Number of most-recent run directories to retain *per version*.
-        Pass ``0`` to keep all.
+        Number of most-recent run directories to retain.  Pass ``0`` to keep all.
 
     Returns
     -------
@@ -234,34 +230,17 @@ def prune_local_results(output_dir: Path, keep_n: int) -> list[Path]:
         d for d in output_dir.iterdir()
         if d.is_dir() and d.name.startswith("run_")
     ) if output_dir.exists() else []
+    old_dirs = run_dirs[:-keep_n] if len(run_dirs) > keep_n else []
 
-    # Group run dirs by the algorithm_version recorded in their metrics.json.
-    version_runs: dict[str, list[Path]] = {}
-    for d in run_dirs:
-        meta_path = d / "metrics.json"
-        version = "v1"  # default when no metrics.json is present
-        if meta_path.exists():
-            try:
-                meta = json.loads(meta_path.read_text(encoding="utf-8"))
-                version = meta.get("algorithm_version") or "v1"
-            except Exception:
-                pass
-        version_runs.setdefault(version, []).append(d)
-
-    # Within each version group keep only the N most-recent run dirs.
     deleted: list[Path] = []
-    n_pruned = 0
-    for dirs in version_runs.values():
-        old_dirs = dirs[:-keep_n] if len(dirs) > keep_n else []
-        for d in old_dirs:
-            for f in sorted(d.iterdir()):
-                f.unlink()
-                deleted.append(f)
-            d.rmdir()
-            deleted.append(d)
-            n_pruned += 1
-    if n_pruned:
-        print(f"  Pruned {n_pruned} old run dir(s) in '{output_dir}'")
+    for d in old_dirs:
+        for f in sorted(d.iterdir()):
+            f.unlink()
+            deleted.append(f)
+        d.rmdir()
+        deleted.append(d)
+    if deleted:
+        print(f"  Pruned {len(old_dirs)} old run dir(s) in '{output_dir}'")
     return deleted
 
 
@@ -353,6 +332,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--web",
         action="store_true",
         help="Open the web UI launcher in the system browser to configure and start a run.",
+    )
+    parser.add_argument(
+        "--algo-version",
+        default=None,
+        metavar="VERSION",
+        help="Override the algorithm version tag written to metrics.json "
+             "(e.g. 'v2-experiment').  Defaults to the algorithm class's own "
+             "'version' attribute.",
     )
 
     argcomplete.autocomplete(parser)
@@ -446,10 +433,17 @@ def main(argv: list[str] | None = None) -> None:
 
         # Save run metadata
         ts_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        # --algo-version overrides the class-level version; fall back to the
+        # algorithm's own 'version' attribute (or "v1" for legacy classes).
+        effective_version = (
+            args.algo_version.strip()
+            if args.algo_version and args.algo_version.strip()
+            else getattr(algorithm, "version", "v1")
+        )
         meta_path = write_run_metadata(
             run_dir=run_dir,
             algorithm_name=algorithm.name,
-            algorithm_version=getattr(algorithm, "version", "v1"),
+            algorithm_version=effective_version,
             n_games=args.games,
             n_workers=n_workers,
             timestamp=ts_iso,

@@ -126,6 +126,13 @@
     .btn-secondary:hover { background: #bbada0; }
     .btn-primary { background: #f59563; color: #f9f6f2; }
     .btn-primary:hover { background: #f67c5f; }
+    .field-hint {
+      font-size: 0.85em;
+      opacity: .7;
+      font-weight: 400;
+      text-transform: none;
+      letter-spacing: 0;
+    }
   </style>
 </head>
 <body>
@@ -150,6 +157,13 @@
         <option value="dqn">dqn</option>
         <option value="ppo">ppo</option>
       </select>
+    </div>
+
+    <!-- Version tag -->
+    <div class="field">
+      <label for="algo_version">Version tag <span class="field-hint">(optional — leave blank to use the algorithm&#8217;s default)</span></label>
+      <input type="text" id="algo_version" name="algo_version"
+             placeholder="e.g. v2, v2-experiment">
     </div>
 
     <!-- Mode -->

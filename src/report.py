@@ -923,10 +923,6 @@ def _run_accordion_item(
         f'<span class="chip">{win_rate:.0f}% wins</span>'
         f"</div>"
     )
-        f'<span class="chip">best tile {best_tile}</span>'
-        f'<span class="chip">{win_rate:.0f}% wins</span>'
-        f"</div>"
-    )
 
     # Embedded chart (if chart.png exists inside the run dir)
     img_src = _embed_image(run_dir / "chart.png")

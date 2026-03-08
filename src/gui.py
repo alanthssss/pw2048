@@ -41,6 +41,7 @@ def _build_argv(
     s3_bucket: str,
     s3_prefix: str,
     s3_public: bool,
+    version: str = "",
 ) -> list[str]:
     """Convert GUI form values to an argv list for :func:`main.parse_args`.
 
@@ -69,6 +70,8 @@ def _build_argv(
         S3 key prefix.
     s3_public:
         Whether to pass ``--s3-public``.
+    version:
+        Optional algorithm version tag override.  Empty string → omit flag.
 
     Returns
     -------
@@ -80,6 +83,8 @@ def _build_argv(
         "--output", output or "results",
         "--keep", keep,
     ]
+    if version.strip():
+        argv += ["--algo-version", version.strip()]
     if mode_choice != "custom":
         argv += ["--mode", mode_choice]
     else:
@@ -174,6 +179,16 @@ def run_gui() -> list[str]:
     ttk.Combobox(
         outer, textvariable=algo_var, values=_ALGORITHMS, state="readonly", width=14
     ).grid(row=row, column=1, sticky="w", **PAD)
+    row += 1
+
+    _label("Version tag:")
+    version_var = tk.StringVar(value="")
+    ttk.Entry(outer, textvariable=version_var, width=20).grid(
+        row=row, column=1, columnspan=2, sticky="w", **PAD
+    )
+    ttk.Label(outer, text="(blank → algorithm default)", font=("", 8, "italic")).grid(
+        row=row, column=2, sticky="w", **PAD
+    )
     row += 1
 
     _sep()
@@ -331,6 +346,7 @@ def run_gui() -> list[str]:
             s3_bucket=s3_bucket_var.get(),
             s3_prefix=s3_prefix_var.get(),
             s3_public=bool(s3_public_var.get()),
+            version=version_var.get(),
         )
         result.append(argv)
         root.destroy()

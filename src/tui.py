@@ -84,6 +84,15 @@ def run_tui() -> list[str]:
     if algorithm is None:
         raise SystemExit(0)
 
+    # ── Version tag ───────────────────────────────────────────────────────────
+    version_tag = questionary.text(
+        "Version tag (leave blank to use the algorithm's default):",
+        default="",
+        style=_STYLE,
+    ).ask()
+    if version_tag is None:
+        raise SystemExit(0)
+
     # ── Run mode ──────────────────────────────────────────────────────────────
     mode_choice = questionary.select(
         "Run mode:",
@@ -226,6 +235,7 @@ def run_tui() -> list[str]:
     table.add_column("Value", style="bold")
 
     table.add_row("Algorithm", algorithm)
+    table.add_row("Version tag", version_tag.strip() if version_tag.strip() else "(default)")
     if mode_choice == "custom":
         table.add_row("Games / run", games)
         table.add_row("Runs", runs)
@@ -261,6 +271,9 @@ def run_tui() -> list[str]:
         "--output", output,
         "--keep", keep_str,
     ]
+
+    if version_tag.strip():
+        argv += ["--algo-version", version_tag.strip()]
 
     if mode_choice != "custom":
         argv += ["--mode", mode_choice]

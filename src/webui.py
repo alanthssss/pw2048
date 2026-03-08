@@ -62,12 +62,16 @@ def _form_to_argv(form: dict[str, list[str]]) -> list[str]:
     mode_choice = _get("mode", "custom")
     output = _get("output", "results") or "results"
     keep = _get("keep", str(_DEFAULT_KEEP))
+    algo_version = _get("algo_version", "").strip()
 
     argv: list[str] = [
         "--algorithm", algorithm,
         "--output", output,
         "--keep", keep,
     ]
+
+    if algo_version:
+        argv += ["--algo-version", algo_version]
 
     if mode_choice != "custom":
         argv += ["--mode", mode_choice]

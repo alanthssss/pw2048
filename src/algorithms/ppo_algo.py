@@ -331,8 +331,10 @@ class PPOAlgorithm(BaseAlgorithm):
         """Normalise *reward* using an exponential moving-average mean and variance.
 
         Stable gradient updates require rewards on a consistent scale.  This
-        helper maintains a running estimate of the reward distribution and
-        returns a zero-mean, unit-variance version of the input reward.
+        helper maintains a running EMA estimate of the reward distribution and
+        returns an approximately zero-mean, unit-variance version of the input
+        reward.  The normalisation improves as the EMA estimates converge over
+        the course of training.
         """
         a = self._reward_ema_alpha
         self._reward_ema_mean = (1.0 - a) * self._reward_ema_mean + a * reward
