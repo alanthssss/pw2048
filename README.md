@@ -57,8 +57,8 @@ python main.py --mode benchmark --report
 - [x] **MCTS** — Monte Carlo Tree Search
 
 ### Learning Algorithms
-- [ ] **DQN** — Deep Q-Network (reinforcement learning)
-- [ ] **PPO** — Proximal Policy Optimization (reinforcement learning)
+- [x] **DQN** — Deep Q-Network (reinforcement learning)
+- [x] **PPO** — Proximal Policy Optimization (reinforcement learning)
 
 ## Project structure
 
@@ -82,7 +82,9 @@ pw2048/
 │       ├── greedy_algo.py     # Greedy (maximise immediate score gain)
 │       ├── heuristic_algo.py  # Heuristic (empty tiles, monotonicity, corner, merge)
 │       ├── expectimax_algo.py # Expectimax (game-tree search with chance nodes)
-│       └── mcts_algo.py       # MCTS (Monte Carlo Tree Search)
+│       ├── mcts_algo.py       # MCTS (Monte Carlo Tree Search)
+│       ├── dqn_algo.py        # DQN (Deep Q-Network, reinforcement learning)
+│       └── ppo_algo.py        # PPO (Proximal Policy Optimization, reinforcement learning)
 └── tests/
     ├── test_game_and_algorithms.py
     ├── test_storage_and_report.py
@@ -266,7 +268,7 @@ values:
 
 ```
 $ python main.py --algorithm <TAB>
-expectimax    greedy    heuristic    mcts    random
+expectimax    greedy    heuristic    mcts    random    dqn    ppo
 
 $ python main.py --mode <TAB>
 benchmark    dev    release
@@ -284,7 +286,7 @@ $ python main.py --<TAB>
 | `--mode MODE` | — | Preset: `dev` (100 games, 1 run), `release` (1 000 games, 1 run), `benchmark` (500 games, 5 runs). Explicit `--games`/`--runs`/`--parallel` override the preset. |
 | `--games N` | `20` | Number of games to play per run |
 | `--runs N` | `1` | Number of times to repeat the full set of games; each run gets its own `run_<timestamp>/` directory |
-| `--algorithm NAME` | `random` | Algorithm to use (`random`, `greedy`, `heuristic`, `expectimax`, `mcts`) |
+| `--algorithm NAME` | `random` | Algorithm to use (`random`, `greedy`, `heuristic`, `expectimax`, `mcts`, `dqn`, `ppo`) |
 | `--output DIR` | `results` | Root directory for run artifacts |
 | `--show` | off | Open a visible browser window while playing |
 | `--keep N` | `10` | Keep only the N most-recent runs per algorithm; pass `0` to disable pruning |

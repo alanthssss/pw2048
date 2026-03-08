@@ -298,3 +298,19 @@ class TestRunTuiArgvParseable:
             argv = run_tui()
         args = parse_args(argv)
         assert args.algorithm == "mcts"
+
+    def test_dqn_argv_is_valid(self):
+        from main import parse_args
+
+        with _patch_tui(_mock_answers(algorithm="dqn")):
+            argv = run_tui()
+        args = parse_args(argv)
+        assert args.algorithm == "dqn"
+
+    def test_ppo_argv_is_valid(self):
+        from main import parse_args
+
+        with _patch_tui(_mock_answers(algorithm="ppo")):
+            argv = run_tui()
+        args = parse_args(argv)
+        assert args.algorithm == "ppo"

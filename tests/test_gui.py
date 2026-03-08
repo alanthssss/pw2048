@@ -186,6 +186,18 @@ class TestBuildArgvParseable:
         args = parse_args(_argv(algorithm="mcts"))
         assert args.algorithm == "mcts"
 
+    def test_dqn_argv_valid(self):
+        from main import parse_args
+
+        args = parse_args(_argv(algorithm="dqn"))
+        assert args.algorithm == "dqn"
+
+    def test_ppo_argv_valid(self):
+        from main import parse_args
+
+        args = parse_args(_argv(algorithm="ppo"))
+        assert args.algorithm == "ppo"
+
 
 # ---------------------------------------------------------------------------
 # Tests: run_gui() when tkinter is absent
