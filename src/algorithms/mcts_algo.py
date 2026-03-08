@@ -154,11 +154,12 @@ class MCTSAlgorithm(BaseAlgorithm):
     """
 
     name = "MCTS"
+    version = "v2"
 
     def __init__(
         self,
-        n_iterations: int = 200,
-        sim_depth: int = 20,
+        n_iterations: int = 400,
+        sim_depth: int = 40,
         exploration: float = math.sqrt(2),
         seed: int | None = None,
     ) -> None:
@@ -212,27 +213,45 @@ class MCTSAlgorithm(BaseAlgorithm):
         return child
 
     def _simulate(self, board: List[List[int]]) -> float:
-        """Play random moves from *board* for up to *sim_depth* steps.
+        """Heuristic-guided rollout from *board* for up to *sim_depth* steps.
 
-        Returns the total merge score accumulated during the rollout.
+        At each step the algorithm tries all valid moves and picks the one with
+        the highest immediate merge score (greedy exploitation).  When no valid
+        move produces any merge score the first valid move is used to avoid
+        the game stalling too early.  Returns the total merge score accumulated
+        during the rollout.
         """
         current = [row[:] for row in board]
         total_score = 0.0
 
         for _ in range(self._sim_depth):
-            # Try directions in a random order; use the first valid one.
+            # Collect all valid moves and their immediate merge scores.
             directions = list(DIRECTIONS)
             self._rng.shuffle(directions)
-            moved = False
+            best_dir: str | None = None
+            best_score: float = -1.0
+            first_valid: tuple[str, list, float] | None = None
+
             for d in directions:
                 new_board, score = simulate_move(current, d)
                 if not _boards_equal(current, new_board):
-                    current = _spawn_tile(new_board, self._rng)
-                    total_score += score
-                    moved = True
-                    break
-            if not moved:
+                    if first_valid is None:
+                        first_valid = (d, new_board, score)
+                    if score > best_score:
+                        best_score = score
+                        best_dir = d
+
+            if best_dir is None:
                 break  # game over
+
+            # Prefer the move with the highest merge score; fall back to first valid.
+            chosen_dir, chosen_board, chosen_score = (
+                (best_dir, *simulate_move(current, best_dir))
+                if best_dir is not None
+                else first_valid  # type: ignore[misc]
+            )
+            current = _spawn_tile(chosen_board, self._rng)
+            total_score += chosen_score
 
         return total_score
 

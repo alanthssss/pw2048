@@ -206,18 +206,22 @@ def write_run_metadata(
 
 
 def prune_local_results(output_dir: Path, keep_n: int) -> list[Path]:
-    """Delete old run directories, keeping only the latest *keep_n* runs.
+    """Delete old run directories, keeping only the latest *keep_n* runs per version.
 
     Each "run" is a subdirectory named ``run_<timestamp>`` under *output_dir*.
     Directories are sorted lexicographically (chronological order because the
-    timestamp prefix is ``YYYYMMDD_HHMMSS``).
+    timestamp prefix is ``YYYYMMDD_HHMMSS``).  Runs are grouped by the
+    ``algorithm_version`` field in their ``metrics.json``; the *keep_n* most
+    recent directories **within each version group** are retained so that old
+    results are preserved when the algorithm is upgraded.
 
     Parameters
     ----------
     output_dir:
         Algorithm-scoped results directory (e.g. ``results/Random/``).
     keep_n:
-        Number of most-recent run directories to retain.  Pass ``0`` to keep all.
+        Number of most-recent run directories to retain *per version*.
+        Pass ``0`` to keep all.
 
     Returns
     -------
@@ -230,17 +234,34 @@ def prune_local_results(output_dir: Path, keep_n: int) -> list[Path]:
         d for d in output_dir.iterdir()
         if d.is_dir() and d.name.startswith("run_")
     ) if output_dir.exists() else []
-    old_dirs = run_dirs[:-keep_n] if len(run_dirs) > keep_n else []
 
+    # Group run dirs by the algorithm_version recorded in their metrics.json.
+    version_runs: dict[str, list[Path]] = {}
+    for d in run_dirs:
+        meta_path = d / "metrics.json"
+        version = "v1"  # default when no metrics.json is present
+        if meta_path.exists():
+            try:
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
+                version = meta.get("algorithm_version") or "v1"
+            except Exception:
+                pass
+        version_runs.setdefault(version, []).append(d)
+
+    # Within each version group keep only the N most-recent run dirs.
     deleted: list[Path] = []
-    for d in old_dirs:
-        for f in sorted(d.iterdir()):
-            f.unlink()
-            deleted.append(f)
-        d.rmdir()
-        deleted.append(d)
-    if deleted:
-        print(f"  Pruned {len(old_dirs)} old run dir(s) in '{output_dir}'")
+    n_pruned = 0
+    for dirs in version_runs.values():
+        old_dirs = dirs[:-keep_n] if len(dirs) > keep_n else []
+        for d in old_dirs:
+            for f in sorted(d.iterdir()):
+                f.unlink()
+                deleted.append(f)
+            d.rmdir()
+            deleted.append(d)
+            n_pruned += 1
+    if n_pruned:
+        print(f"  Pruned {n_pruned} old run dir(s) in '{output_dir}'")
     return deleted
 
 

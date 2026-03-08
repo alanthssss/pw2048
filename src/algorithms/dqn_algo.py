@@ -189,11 +189,11 @@ class DQNAlgorithm(BaseAlgorithm):
     """
 
     name = "DQN"
-    version = "v1"
+    version = "v2"
 
     def __init__(
         self,
-        hidden_size: int = 128,
+        hidden_size: int = 256,
         lr: float = 1e-3,
         gamma: float = 0.99,
         epsilon_start: float = 1.0,
@@ -296,7 +296,12 @@ class DQNAlgorithm(BaseAlgorithm):
     # ------------------------------------------------------------------
 
     def _train_step(self) -> None:
-        """Sample a mini-batch from the replay buffer and update the Q-network."""
+        """Sample a mini-batch from the replay buffer and update the Q-network.
+
+        Uses Double DQN: the online network selects the greedy next action and
+        the target network evaluates its Q-value.  This reduces the
+        overestimation bias present in vanilla DQN.
+        """
         batch = self._rng.sample(list(self._buffer), self._batch_size)
         S = np.array([e[0] for e in batch], dtype=np.float32)   # (B, 16)
         A = np.array([e[1] for e in batch], dtype=np.int32)      # (B,)
@@ -304,9 +309,17 @@ class DQNAlgorithm(BaseAlgorithm):
         S2 = np.array([e[3] for e in batch], dtype=np.float32)   # (B, 16)
         D = np.array([e[4] for e in batch], dtype=np.float32)    # (B,)
 
-        # Target Q-values (Bellman backup using target network).
-        next_q, *_ = self._target_net.forward(S2)
-        target_q = R + self._gamma * np.max(next_q, axis=1) * (1.0 - D)
+        # Double DQN: online net picks the greedy action for next state,
+        # target net evaluates that action's Q-value.
+        online_next_q, *_ = self._q_net.forward(S2)
+        best_next_actions = np.argmax(online_next_q, axis=1)     # (B,)
+        target_next_q, *_ = self._target_net.forward(S2)
+        target_q = (
+            R
+            + self._gamma
+            * target_next_q[np.arange(self._batch_size), best_next_actions]
+            * (1.0 - D)
+        )
 
         # Forward pass through the online Q-network.
         q_out, h2, z2, h1, z1 = self._q_net.forward(S)

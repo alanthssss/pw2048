@@ -201,17 +201,17 @@ class PPOAlgorithm(BaseAlgorithm):
     """
 
     name = "PPO"
-    version = "v1"
+    version = "v2"
 
     def __init__(
         self,
-        hidden_size: int = 128,
+        hidden_size: int = 256,
         lr: float = 3e-4,
         gamma: float = 0.99,
         lam: float = 0.95,
         clip_eps: float = 0.2,
-        n_epochs: int = 4,
-        update_freq: int = 256,
+        n_epochs: int = 8,
+        update_freq: int = 512,
         entropy_coef: float = 0.01,
         value_coef: float = 0.5,
         seed: Optional[int] = None,
@@ -230,6 +230,11 @@ class PPOAlgorithm(BaseAlgorithm):
         self._update_freq = update_freq
         self._entropy_coef = entropy_coef
         self._value_coef = value_coef
+
+        # Running statistics for reward normalisation (exponential moving average).
+        self._reward_ema_mean: float = 0.0
+        self._reward_ema_var: float = 1.0
+        self._reward_ema_alpha: float = 0.01
 
         # Rollout buffer (cleared after each PPO update).
         self._buf_states: list[np.ndarray] = []
@@ -273,7 +278,8 @@ class PPOAlgorithm(BaseAlgorithm):
         # Store transition
         # ----------------------------------------------------------------
         if self._prev_state is not None:
-            reward = _board_heuristic(board) - _board_heuristic(self._prev_board)  # type: ignore[arg-type]
+            raw_reward = _board_heuristic(board) - _board_heuristic(self._prev_board)  # type: ignore[arg-type]
+            reward = self._normalize_reward(raw_reward)
             done = float(len(valid_dirs) == 0)
             self._buf_states.append(self._prev_state)
             self._buf_actions.append(self._prev_action)          # type: ignore[arg-type]
@@ -316,6 +322,25 @@ class PPOAlgorithm(BaseAlgorithm):
         self._prev_board = [row[:] for row in board]
 
         return DIRECTIONS[action]
+
+    # ------------------------------------------------------------------
+    # Reward normalisation
+    # ------------------------------------------------------------------
+
+    def _normalize_reward(self, reward: float) -> float:
+        """Normalise *reward* using an exponential moving-average mean and variance.
+
+        Stable gradient updates require rewards on a consistent scale.  This
+        helper maintains a running estimate of the reward distribution and
+        returns a zero-mean, unit-variance version of the input reward.
+        """
+        a = self._reward_ema_alpha
+        self._reward_ema_mean = (1.0 - a) * self._reward_ema_mean + a * reward
+        self._reward_ema_var = (
+            (1.0 - a) * self._reward_ema_var
+            + a * (reward - self._reward_ema_mean) ** 2
+        )
+        return (reward - self._reward_ema_mean) / (math.sqrt(self._reward_ema_var) + 1e-8)
 
     # ------------------------------------------------------------------
     # PPO update
