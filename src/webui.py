@@ -65,7 +65,6 @@ def _form_to_argv(form: dict[str, list[str]]) -> list[str]:
     output = _get("output", "results") or "results"
     keep = _get("keep", str(_DEFAULT_KEEP))
     algo_version = _get("algo_version", "").strip()
-    checkpoint_dir = _get("checkpoint_dir", "").strip()
 
     argv: list[str] = [
         "--algorithm", algorithm,
@@ -75,9 +74,6 @@ def _form_to_argv(form: dict[str, list[str]]) -> list[str]:
 
     if algo_version:
         argv += ["--algo-version", algo_version]
-
-    if checkpoint_dir:
-        argv += ["--checkpoint-dir", checkpoint_dir]
 
     train_games = _get("train_games", "0").strip()
     if train_games and int(train_games) > 0:
@@ -103,12 +99,6 @@ def _form_to_argv(form: dict[str, list[str]]) -> list[str]:
         argv.append("--show")
     if "report" in form:
         argv.append("--report")
-
-    bucket = _get("s3_bucket").strip()
-    if bucket:
-        argv += ["--s3-bucket", bucket, "--s3-prefix", _get("s3_prefix", "results")]
-        if "s3_public" in form:
-            argv.append("--s3-public")
 
     return argv
 

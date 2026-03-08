@@ -45,11 +45,7 @@ def _build_argv(
     show: bool,
     keep: str,
     report: bool,
-    s3_bucket: str,
-    s3_prefix: str,
-    s3_public: bool,
     version: str = "",
-    checkpoint_dir: str = "",
     train_games: str = "0",
     eval_freq: str = str(_DEFAULT_EVAL_FREQ),
     n_eval_games: str = str(_DEFAULT_N_EVAL_GAMES),
@@ -76,17 +72,8 @@ def _build_argv(
         String representation of the keep-N-runs integer.
     report:
         Whether to pass ``--report``.
-    s3_bucket:
-        S3 bucket name (empty string → omit S3 flags).
-    s3_prefix:
-        S3 key prefix.
-    s3_public:
-        Whether to pass ``--s3-public``.
     version:
         Optional algorithm version tag override.  Empty string → omit flag.
-    checkpoint_dir:
-        Optional checkpoint directory for DQN/PPO persistence.  Empty string
-        → omit flag.
     train_games:
         Number of fast in-process training games (``"0"`` → omit flag).
     eval_freq:
@@ -108,8 +95,6 @@ def _build_argv(
     ]
     if version.strip():
         argv += ["--algo-version", version.strip()]
-    if checkpoint_dir.strip():
-        argv += ["--checkpoint-dir", checkpoint_dir.strip()]
     if train_games.strip() and int(train_games.strip()) > 0:
         argv += [
             "--train-games", train_games.strip(),
@@ -130,11 +115,6 @@ def _build_argv(
         argv.append("--show")
     if report:
         argv.append("--report")
-    bucket = s3_bucket.strip()
-    if bucket:
-        argv += ["--s3-bucket", bucket, "--s3-prefix", s3_prefix or "results"]
-        if s3_public:
-            argv.append("--s3-public")
     return argv
 
 
@@ -285,27 +265,6 @@ def run_gui() -> list[str]:
     ).grid(row=row, column=2, sticky="w", **PAD)
     row += 1
 
-    _label("Checkpoint dir:")
-    checkpoint_var = tk.StringVar(value="")
-    ttk.Entry(outer, textvariable=checkpoint_var, width=24).grid(
-        row=row, column=1, sticky="w", **PAD
-    )
-    ttk.Button(
-        outer,
-        text="Browse…",
-        command=lambda: checkpoint_var.set(
-            filedialog.askdirectory(initialdir=checkpoint_var.get() or ".")
-            or checkpoint_var.get()
-        ),
-    ).grid(row=row, column=2, sticky="w", **PAD)
-    row += 1
-    ttk.Label(
-        outer,
-        text="(blank → disabled; DQN/PPO only)",
-        font=("", 8, "italic"),
-    ).grid(row=row, column=1, columnspan=2, sticky="w", **PAD)
-    row += 1
-
     _sep()
 
     # ── RL Training (DQN / PPO only) ──────────────────────────────────────
@@ -384,35 +343,6 @@ def run_gui() -> list[str]:
 
     _sep()
 
-    # ── S3 options ────────────────────────────────────────────────────────
-    ttk.Label(outer, text="S3 (optional)", font=("", 9, "italic")).grid(
-        row=row, column=0, columnspan=3, sticky="w", **PAD
-    )
-    row += 1
-
-    _label("S3 bucket:")
-    s3_bucket_var = tk.StringVar(value="")
-    ttk.Entry(outer, textvariable=s3_bucket_var, width=28).grid(
-        row=row, column=1, columnspan=2, sticky="w", **PAD
-    )
-    row += 1
-
-    _label("S3 prefix:")
-    s3_prefix_var = tk.StringVar(value="results")
-    ttk.Entry(outer, textvariable=s3_prefix_var, width=28).grid(
-        row=row, column=1, columnspan=2, sticky="w", **PAD
-    )
-    row += 1
-
-    _label("Public-read:")
-    s3_public_var = tk.BooleanVar(value=False)
-    ttk.Checkbutton(outer, variable=s3_public_var).grid(
-        row=row, column=1, sticky="w", **PAD
-    )
-    row += 1
-
-    _sep()
-
     # ── Error label ───────────────────────────────────────────────────────
     err_var = tk.StringVar(value="")
     ttk.Label(outer, textvariable=err_var, foreground="red").grid(
@@ -463,11 +393,7 @@ def run_gui() -> list[str]:
             show=bool(show_var.get()),
             keep=keep_var.get().strip(),
             report=bool(report_var.get()),
-            s3_bucket=s3_bucket_var.get(),
-            s3_prefix=s3_prefix_var.get(),
-            s3_public=bool(s3_public_var.get()),
             version=version_var.get(),
-            checkpoint_dir=checkpoint_var.get(),
             train_games=train_games_var.get().strip(),
             eval_freq=eval_freq_var.get().strip(),
             n_eval_games=n_eval_games_var.get().strip(),

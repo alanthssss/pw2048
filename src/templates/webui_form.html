@@ -241,11 +241,6 @@
           <input type="number" id="keep" name="keep" value="10" min="0">
         </div>
       </div>
-      <div class="field">
-        <label for="checkpoint_dir">Checkpoint directory <span class="field-hint">(optional — DQN / PPO only; leave blank to disable)</span></label>
-        <input type="text" id="checkpoint_dir" name="checkpoint_dir"
-               placeholder="e.g. checkpoints">
-      </div>
     </div>
 
     <!-- RL Training (DQN / PPO only) -->
@@ -282,24 +277,6 @@
       <div class="check-row">
         <input type="checkbox" id="report" name="report">
         <label for="report">Generate HTML report after run</label>
-      </div>
-    </div>
-
-    <!-- S3 -->
-    <div class="section">
-      <div class="section-title">S3 (optional)</div>
-      <div class="field">
-        <label for="s3_bucket">Bucket</label>
-        <input type="text" id="s3_bucket" name="s3_bucket"
-               placeholder="leave blank to skip">
-      </div>
-      <div class="field">
-        <label for="s3_prefix">Key prefix</label>
-        <input type="text" id="s3_prefix" name="s3_prefix" value="results">
-      </div>
-      <div class="check-row">
-        <input type="checkbox" id="s3_public" name="s3_public">
-        <label for="s3_public">Apply public-read ACL to uploaded objects</label>
       </div>
     </div>
 

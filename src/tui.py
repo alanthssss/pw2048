@@ -166,15 +166,6 @@ def run_tui() -> list[str]:
     if output is None:
         raise SystemExit(0)
 
-    # ── Checkpoint directory (learning algorithms only) ───────────────────────
-    checkpoint_dir = questionary.text(
-        "Checkpoint directory (leave blank to disable — DQN/PPO only):",
-        default="",
-        style=_STYLE,
-    ).ask()
-    if checkpoint_dir is None:
-        raise SystemExit(0)
-
     # ── RL Training (learning algorithms only) ────────────────────────────────
     _is_rl = algorithm.startswith("dqn") or algorithm.startswith("ppo")
     train_games_str = "0"
@@ -247,42 +238,6 @@ def run_tui() -> list[str]:
     if report is None:
         raise SystemExit(0)
 
-    # ── S3 options ────────────────────────────────────────────────────────────
-    use_s3 = questionary.confirm(
-        "Upload results to S3?",
-        default=False,
-        style=_STYLE,
-    ).ask()
-    if use_s3 is None:
-        raise SystemExit(0)
-
-    s3_bucket = s3_prefix = None
-    s3_public = False
-    if use_s3:
-        s3_bucket = questionary.text(
-            "S3 bucket name:",
-            validate=lambda v: bool(v.strip()) or "Bucket name cannot be empty.",
-            style=_STYLE,
-        ).ask()
-        if s3_bucket is None:
-            raise SystemExit(0)
-
-        s3_prefix = questionary.text(
-            "S3 key prefix:",
-            default="results",
-            style=_STYLE,
-        ).ask()
-        if s3_prefix is None:
-            raise SystemExit(0)
-
-        s3_public = questionary.confirm(
-            "Apply public-read ACL to uploaded objects?",
-            default=False,
-            style=_STYLE,
-        ).ask()
-        if s3_public is None:
-            raise SystemExit(0)
-
     # ── Summary table ─────────────────────────────────────────────────────────
     _console.print()
     table = Table(
@@ -307,10 +262,6 @@ def run_tui() -> list[str]:
             f"{mode_choice}  ({p['games']} games × {p['runs']} run(s), auto parallel)",
         )
     table.add_row("Output dir", output + "/")
-    table.add_row(
-        "Checkpoint dir",
-        checkpoint_dir.strip() + "/" if checkpoint_dir.strip() else "–",
-    )
     if _is_rl and int(train_games_str) > 0:
         table.add_row("Train games", train_games_str)
         table.add_row("Eval freq", eval_freq_str)
@@ -322,12 +273,6 @@ def run_tui() -> list[str]:
     table.add_row("Show browser", "yes" if show else "no")
     table.add_row("Keep N runs", keep_str)
     table.add_row("HTML report", "yes" if report else "no")
-    table.add_row(
-        "S3 bucket",
-        f"{s3_bucket}  (prefix: {s3_prefix}{'  public-read' if s3_public else ''})"
-        if s3_bucket
-        else "–",
-    )
 
     _console.print(table)
     _console.print()
@@ -346,9 +291,6 @@ def run_tui() -> list[str]:
 
     if version_tag.strip():
         argv += ["--algo-version", version_tag.strip()]
-
-    if checkpoint_dir.strip():
-        argv += ["--checkpoint-dir", checkpoint_dir.strip()]
 
     if _is_rl and int(train_games_str) > 0:
         argv += ["--train-games", train_games_str]
@@ -370,9 +312,5 @@ def run_tui() -> list[str]:
         argv.append("--show")
     if report:
         argv.append("--report")
-    if use_s3 and s3_bucket:
-        argv += ["--s3-bucket", s3_bucket, "--s3-prefix", str(s3_prefix)]
-        if s3_public:
-            argv.append("--s3-public")
 
     return argv

@@ -6,7 +6,7 @@ Automate the [2048 game](https://play2048.co/) using [Playwright](https://playwr
 
 | 2048 Game | Web Launcher |
 |:---------:|:------------:|
-| ![2048 game launch page](https://github.com/user-attachments/assets/971b6d73-36f0-4d47-b9da-0c27a9c3b5f2) | ![pw2048 Web Launcher](https://github.com/user-attachments/assets/08d9b84a-8180-475b-ae71-63b753c0d55a) |
+| ![2048 game launch page](https://github.com/user-attachments/assets/971b6d73-36f0-4d47-b9da-0c27a9c3b5f2) | ![pw2048 Web Launcher](https://github.com/user-attachments/assets/bbfba22f-7cdc-44b3-82f5-46dc3f8c983b) |
 
 ## At a Glance
 

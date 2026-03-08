@@ -27,7 +27,6 @@ Arrow-key-navigable questionary wizard.  Walks through every option step-by-step
 ? Number of runs:            1
 ? Parallel browser workers:  1
 ? Output directory:          results
-? Checkpoint directory:      checkpoints
 ? ── RL Training (DQN / PPO only) ──
 ? Fast training games (0 = skip):  5000
 ? Eval frequency (games):          50
@@ -36,23 +35,20 @@ Arrow-key-navigable questionary wizard.  Walks through every option step-by-step
 ? Show browser window?    No
 ? Keep N most-recent runs: 10
 ? Generate HTML report?   Yes
-? Upload results to S3?   No
 
    Configuration Summary
-┌──────────────────┬─────────────┐
-│ Algorithm        │ dqn         │
-│ Games / run      │ 50          │
-│ Output dir       │ results/    │
-│ Checkpoint dir   │ checkpoints/│
-│ Train games      │ 5000        │
-│ Eval freq        │ 50          │
-│ Eval games       │ 20          │
-│ TensorBoard dir  │ tb_logs/    │
-│ Show browser     │ no          │
-│ Keep N runs      │ 10          │
-│ HTML report      │ yes         │
-│ S3 bucket        │ –           │
-└──────────────────┴─────────────┘
+┌──────────────────┬──────────┐
+│ Algorithm        │ dqn      │
+│ Games / run      │ 50       │
+│ Output dir       │ results/ │
+│ Train games      │ 5000     │
+│ Eval freq        │ 50       │
+│ Eval games       │ 20       │
+│ TensorBoard dir  │ tb_logs/ │
+│ Show browser     │ no       │
+│ Keep N runs      │ 10       │
+│ HTML report      │ yes      │
+└──────────────────┴──────────┘
 
 ? Proceed? Yes
 ```
@@ -68,7 +64,6 @@ confirmation, to abort without running any games.
 | Run mode (preset) | `--mode` |
 | Games / runs / workers (custom) | `--games`, `--runs`, `--parallel` |
 | Output directory | `--output` |
-| Checkpoint directory | `--checkpoint-dir` |
 | Fast training games | `--train-games` |
 | Eval frequency | `--eval-freq` |
 | Eval games per round | `--n-eval-games` |
@@ -76,7 +71,6 @@ confirmation, to abort without running any games.
 | Show browser | `--show` |
 | Keep N runs | `--keep` |
 | HTML report | `--report` |
-| S3 upload | `--s3-bucket`, `--s3-prefix`, `--s3-public` |
 
 ---
 
@@ -117,7 +111,7 @@ The form includes a dedicated **RL Training** section for the `--train-games`
 pipeline.  Fill in the form and click **Launch ▶** — the server shuts down
 automatically and runs start in your terminal.
 
-![pw2048 Web Launcher](https://github.com/user-attachments/assets/08d9b84a-8180-475b-ae71-63b753c0d55a)
+![pw2048 Web Launcher](https://github.com/user-attachments/assets/bbfba22f-7cdc-44b3-82f5-46dc3f8c983b)
 
 The web UI requires **no third-party packages** — only the Python standard
 library (`http.server`, `threading`, `webbrowser`).

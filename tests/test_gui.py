@@ -36,9 +36,6 @@ def _argv(**kwargs) -> list[str]:
         show=False,
         keep="10",
         report=False,
-        s3_bucket="",
-        s3_prefix="results",
-        s3_public=False,
     )
     defaults.update(kwargs)
     return _build_argv(**defaults)  # type: ignore[arg-type]
@@ -102,33 +99,10 @@ class TestBuildArgvCustomMode:
     def test_report_present_when_enabled(self):
         assert "--report" in _argv(report=True)
 
-    def test_no_s3_flags_when_bucket_empty(self):
-        result = _argv(s3_bucket="")
+    def test_no_s3_flags_emitted(self):
+        result = _argv()
         assert "--s3-bucket" not in result
-        assert "--s3-prefix" not in result
-
-    def test_s3_flags_present_when_bucket_set(self):
-        result = _argv(s3_bucket="my-bucket", s3_prefix="pfx")
-        assert "--s3-bucket" in result
-        assert result[result.index("--s3-bucket") + 1] == "my-bucket"
-        assert "--s3-prefix" in result
-        assert result[result.index("--s3-prefix") + 1] == "pfx"
-
-    def test_s3_public_absent_by_default(self):
-        result = _argv(s3_bucket="b", s3_public=False)
         assert "--s3-public" not in result
-
-    def test_s3_public_present_when_set(self):
-        result = _argv(s3_bucket="b", s3_public=True)
-        assert "--s3-public" in result
-
-    def test_s3_public_ignored_when_no_bucket(self):
-        result = _argv(s3_bucket="", s3_public=True)
-        assert "--s3-public" not in result
-
-    def test_whitespace_bucket_treated_as_empty(self):
-        result = _argv(s3_bucket="   ")
-        assert "--s3-bucket" not in result
 
 
 class TestBuildArgvPresetMode:

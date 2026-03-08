@@ -97,33 +97,10 @@ class TestFormToArgvCustomMode:
         result = _form_to_argv(_form(report="on"))
         assert "--report" in result
 
-    def test_no_s3_flags_when_bucket_empty(self):
-        result = _form_to_argv(_form(s3_bucket=""))
+    def test_no_s3_flags_emitted(self):
+        result = _form_to_argv(_form())
         assert "--s3-bucket" not in result
-        assert "--s3-prefix" not in result
-
-    def test_s3_flags_present_when_bucket_set(self):
-        result = _form_to_argv(_form(s3_bucket="my-bucket", s3_prefix="pfx"))
-        assert "--s3-bucket" in result
-        assert result[result.index("--s3-bucket") + 1] == "my-bucket"
-        assert "--s3-prefix" in result
-        assert result[result.index("--s3-prefix") + 1] == "pfx"
-
-    def test_s3_public_absent_by_default(self):
-        result = _form_to_argv(_form(s3_bucket="b"))
         assert "--s3-public" not in result
-
-    def test_s3_public_present_when_checked(self):
-        result = _form_to_argv(_form(s3_bucket="b", s3_prefix="results", s3_public="on"))
-        assert "--s3-public" in result
-
-    def test_s3_public_ignored_when_no_bucket(self):
-        result = _form_to_argv(_form(s3_bucket="", s3_public="on"))
-        assert "--s3-public" not in result
-
-    def test_whitespace_bucket_treated_as_empty(self):
-        result = _form_to_argv(_form(s3_bucket="   "))
-        assert "--s3-bucket" not in result
 
 
 class TestFormToArgvPresetMode:
@@ -347,6 +324,20 @@ class TestWebUIServer:
 
         assert "rl-section" in _HTML_FORM
         assert 'id="rl-section"' in _HTML_FORM
+
+    def test_html_form_has_no_s3_section(self):
+        """S3 section must be completely removed from the form."""
+        from src.webui import _HTML_FORM
+
+        assert "s3_bucket" not in _HTML_FORM
+        assert "s3_prefix" not in _HTML_FORM
+        assert "s3_public" not in _HTML_FORM
+
+    def test_html_form_has_no_checkpoint_dir(self):
+        """Checkpoint directory input must be removed from the form."""
+        from src.webui import _HTML_FORM
+
+        assert "checkpoint_dir" not in _HTML_FORM
 
 
 # ---------------------------------------------------------------------------
