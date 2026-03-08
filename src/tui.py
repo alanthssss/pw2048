@@ -33,8 +33,8 @@ _console = Console()
 _ALGORITHMS = [
     "random", "greedy", "heuristic", "expectimax",
     "mcts-v1", "mcts-v2", "mcts",
-    "dqn-v1", "dqn-v2", "dqn",
-    "ppo-v1", "ppo-v2", "ppo",
+    "dqn-v1", "dqn-v2", "dqn-v3", "dqn",
+    "ppo-v1", "ppo-v2", "ppo-v3", "ppo",
 ]
 _DEFAULT_KEEP = 10
 _DEFAULT_GAMES = 20

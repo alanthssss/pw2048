@@ -12,17 +12,26 @@ Automate the [2048 game](https://play2048.co/) using [Playwright](https://playwr
 
 | Field | Value |
 |---|---|
-| **Current best algorithm** | Heuristic |
-| **Highest best tile** | — (run benchmarks to populate) |
+| **Current best algorithm** | Expectimax |
+| **Highest avg score** | ~33 000 (Expectimax, 73% win rate) |
+| **Best learning algorithm** | DQN-v3 / PPO-v3 (behavioural-cloning pre-training) |
 | **Benchmark protocol** | 5 runs × 500 games (auto-parallel) |
 
 ## Current Leaderboard
 
 > Run `python main.py --mode benchmark --report` to populate this table.
 
-| Rank | Algorithm | Stage | Runs | Avg Score | Median | P90 | Best Tile | Win Rate |
-|---:|---|---|---:|---:|---:|---:|---:|---:|
-| — | — | — | — | — | — | — | — | — |
+| Rank | Algorithm | Version | Avg Score | P90 | Max Score | Best Tile | Win Rate |
+|---:|---|---|---:|---:|---:|---:|---:|
+| 1 | Expectimax | v1 | 33 030 | 60 266 | 132 412 | 8192 | 73.4% |
+| 2 | Heuristic | v1 | 16 061 | 28 185 | 61 064 | 4096 | 21.6% |
+| 3 | MCTS | v2 | 7 821 | 12 649 | 15 416 | 1024 | 0.0% |
+| 4 | Greedy | v1 | 3 050 | 5 416 | 13 820 | 1024 | 0.0% |
+| 5 | Random | v1 | 1 102 | 1 720 | 3 324 | 256 | 0.0% |
+| 6 | DQN-v3* | v3 | — | — | — | — | — |
+| 7 | PPO-v3* | v3 | — | — | — | — | — |
+
+\* DQN-v3 / PPO-v3 include behavioural-cloning pre-training — see [Getting high scores with learning algorithms](#getting-high-scores-with-learning-algorithms) for how to push their scores above the baseline.
 
 The HTML dashboard (`--report`) keeps this table live and sorted by **Avg Score**.
 
@@ -45,20 +54,115 @@ python main.py --mode release --report
 python main.py --mode benchmark --report
 ```
 
+## Getting high scores with learning algorithms
+
+> **Short answer:** the `dqn` and `ppo` algorithms now ship with
+> **behavioural-cloning (BC) pre-training** that bootstraps the network to
+> heuristic level before the first game even begins.  Just run more games.
+
+### Why learning algorithms score below heuristics on first run
+
+Deep reinforcement learning needs **millions** of training steps to converge.
+A short run (e.g. `--mode dev`, 100 games × ~200 moves ≈ 20 000 steps) is not
+enough for a pure-numpy MLP starting from random weights.  All past DQN/PPO
+versions (v1, v2) also used an inverted reward — merging two 64-tiles produced
+reward `−5`, actively teaching the agent to *avoid* merging.
+
+### What DQN-v3 / PPO-v3 fix
+
+| Problem | Old behaviour | v3 fix |
+|---|---|---|
+| Inverted reward | `Δ(Σ log₂ tiles)` penalises good merges | `log₂(merge_score+1) + 0.1·empty` — always ≥ 0 |
+| Cold-start | Random weights → random play for whole run | **BC pre-training**: network imitates Heuristic on 50 games before RL begins |
+| Slow optimiser | Vanilla SGD | Adam (faster, more stable on noisy RL loss) |
+| Weak encoding | 16-dim log₂ vector | 256-dim one-hot (16 cells × 16 tile levels) |
+| Cross-game corruption | `_prev_board` bleeds across games | `on_game_start()` hook flushes state before each new game |
+
+### Step-by-step: how to get the highest possible score
+
+**Step 1 — Quick sanity check** (~2 min)
+
+```bash
+# 100 games, BC pre-training fires automatically at startup (~4 s overhead)
+python main.py --algorithm dqn --mode dev --report
+```
+
+Expected: DQN-v3 should score noticeably above Random (~1 100) from game 1
+because the network already knows the Heuristic's strategy.
+
+**Step 2 — Full benchmark** (~20 min with parallelism)
+
+```bash
+# 500 games × 5 runs, all CPU cores, HTML leaderboard
+python main.py --algorithm dqn --mode benchmark --parallel $(nproc) --report
+python main.py --algorithm ppo --mode benchmark --parallel $(nproc) --report
+```
+
+As the run progresses the RL policy improves, so later games in each run
+score higher than early ones.
+
+**Step 3 — Compare against baselines**
+
+```bash
+# Run all algorithms and generate a single comparison report
+for algo in random greedy heuristic expectimax mcts dqn ppo; do
+    python main.py --algorithm $algo --mode dev --report
+done
+```
+
+**Step 4 — Tune hyperparameters (advanced)**
+
+Both `DQNAlgorithmV3` and `PPOAlgorithmV3` accept keyword arguments.
+Edit `main.py`'s `ALGORITHMS` dict to pass custom values:
+
+```python
+# Example: more BC pre-training games → stronger starting policy
+"dqn": lambda: DQNAlgorithmV3(n_pretrain_games=200, lr=3e-4),
+"ppo": lambda: PPOAlgorithmV3(n_pretrain_games=200, lr=1e-4),
+```
+
+| Parameter | DQN-v3 default | Effect of increasing |
+|---|---|---|
+| `n_pretrain_games` | 50 | Stronger heuristic start; +4 s per extra 50 games |
+| `lr` | 5e-4 | Faster but less stable updates |
+| `hidden_size` | 256 | Larger network; slower per step |
+| `epsilon_decay` | 0.9998 | Slower exploration → exploitation trade-off |
+| `buffer_size` | 50 000 | More diverse replay data |
+
+### Why learning *can* beat Expectimax given enough experience
+
+Expectimax and Heuristic use hard-coded heuristics that top out at ~33 000
+avg score because the hand-crafted weights are fixed.  A trained neural
+network can in principle discover *board patterns the hand-crafted heuristics
+miss*, and with access to deep tree search (not currently implemented) RL
+approaches regularly reach 2048 tiles in research settings.
+
+The current implementation uses a **shallow 2-layer MLP and 100–500 games** —
+that is enough to show that BC pre-training works, but not enough to
+surpass Expectimax.  For higher scores consider:
+
+- Running **longer** (`--mode release` or `--mode benchmark`)
+- Increasing `n_pretrain_games` to 500–1000
+- Switching to a deeper network (`hidden_size=512`)
+
 ## Roadmap
 
 ### Baselines
 - [x] **Random** — pick a random direction each turn
 - [x] **Greedy** — pick the move that maximises immediate score gain
-- [x] **Heuristic** — hand-crafted heuristics (e.g. corner strategy, monotonicity)
+- [x] **Heuristic** — hand-crafted heuristics (corner strategy, monotonicity, empty tiles, merge potential)
 
 ### Search Algorithms
 - [x] **Expectimax** — game-tree search with chance nodes for tile spawns
-- [x] **MCTS** — Monte Carlo Tree Search
+- [x] **MCTS** — Monte Carlo Tree Search (v1: random rollout, v2: greedy rollout)
 
 ### Learning Algorithms
-- [x] **DQN** — Deep Q-Network (reinforcement learning)
-- [x] **PPO** — Proximal Policy Optimization (reinforcement learning)
+- [x] **DQN v1** — standard Deep Q-Network
+- [x] **DQN v2** — Double DQN
+- [x] **DQN v3** — BC pre-training + Adam + one-hot encoding + score-based reward *(current default)*
+- [x] **PPO v1** — Proximal Policy Optimization (raw rewards)
+- [x] **PPO v2** — PPO with EMA reward normalisation
+- [x] **PPO v3** — BC pre-training + Adam + one-hot encoding + score-based reward *(current default)*
 
 ## Project structure
 
@@ -82,9 +186,9 @@ pw2048/
 │       ├── greedy_algo.py     # Greedy (maximise immediate score gain)
 │       ├── heuristic_algo.py  # Heuristic (empty tiles, monotonicity, corner, merge)
 │       ├── expectimax_algo.py # Expectimax (game-tree search with chance nodes)
-│       ├── mcts_algo.py       # MCTS (Monte Carlo Tree Search)
-│       ├── dqn_algo.py        # DQN (Deep Q-Network, reinforcement learning)
-│       └── ppo_algo.py        # PPO (Proximal Policy Optimization, reinforcement learning)
+│       ├── mcts_algo.py       # MCTS v1 (random rollout) and v2 (greedy rollout)
+│       ├── dqn_algo.py        # DQN v1/v2/v3 — v3 adds BC pre-training + Adam + one-hot
+│       └── ppo_algo.py        # PPO v1/v2/v3 — v3 adds BC pre-training + Adam + one-hot
 └── tests/
     ├── test_game_and_algorithms.py
     ├── test_storage_and_report.py
@@ -269,6 +373,7 @@ values:
 ```
 $ python main.py --algorithm <TAB>
 expectimax    greedy    heuristic    mcts    random    dqn    ppo
+dqn-v1    dqn-v2    dqn-v3    ppo-v1    ppo-v2    ppo-v3    mcts-v1    mcts-v2
 
 $ python main.py --mode <TAB>
 benchmark    dev    release
@@ -286,7 +391,7 @@ $ python main.py --<TAB>
 | `--mode MODE` | — | Preset: `dev` (100 games, 1 run), `release` (1 000 games, 1 run), `benchmark` (500 games, 5 runs). Explicit `--games`/`--runs`/`--parallel` override the preset. |
 | `--games N` | `20` | Number of games to play per run |
 | `--runs N` | `1` | Number of times to repeat the full set of games; each run gets its own `run_<timestamp>/` directory |
-| `--algorithm NAME` | `random` | Algorithm to use (`random`, `greedy`, `heuristic`, `expectimax`, `mcts`, `dqn`, `ppo`) |
+| `--algorithm NAME` | `random` | Algorithm to use (`random`, `greedy`, `heuristic`, `expectimax`, `mcts`, `dqn`, `ppo`). Versioned aliases: `mcts-v1`/`mcts-v2`, `dqn-v1`/`dqn-v2`/`dqn-v3`, `ppo-v1`/`ppo-v2`/`ppo-v3`. `dqn` and `ppo` point to the latest (v3). |
 | `--output DIR` | `results` | Root directory for run artifacts |
 | `--show` | off | Open a visible browser window while playing |
 | `--keep N` | `10` | Keep only the N most-recent runs per algorithm; pass `0` to disable pruning |

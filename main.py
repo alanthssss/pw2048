@@ -12,8 +12,12 @@ Usage
 
     Available algorithms: random, greedy, heuristic, expectimax,
                           mcts-v1, mcts-v2, mcts,
-                          dqn-v1, dqn-v2, dqn,
-                          ppo-v1, ppo-v2, ppo
+                          dqn-v1, dqn-v2, dqn-v3, dqn,
+                          ppo-v1, ppo-v2, ppo-v3, ppo
+
+    Learning algorithms (dqn/ppo) use behavioural-cloning pre-training to
+    warm-start the network before RL fine-tuning begins.  Use dqn-v3 / ppo-v3
+    (or the ``dqn`` / ``ppo`` aliases) for best results.
 
     Results are saved under a per-run subdirectory, e.g.::
 
@@ -67,6 +71,16 @@ Examples
 
     # Launch the web UI wizard in the browser
     python main.py --web
+
+    # --- Learning algorithms: get higher scores ---
+    # Quick warm-up: 100 games with DQN-v3 (BC pre-training fires automatically)
+    python main.py --algorithm dqn --mode dev
+
+    # Benchmark run: 500 games × 5 runs, HTML leaderboard
+    python main.py --algorithm dqn --mode benchmark --report
+
+    # Same with PPO-v3
+    python main.py --algorithm ppo --mode benchmark --report
 """
 
 from __future__ import annotations
