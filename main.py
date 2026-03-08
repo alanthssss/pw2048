@@ -10,7 +10,7 @@ Usage
                    [--keep N] [--report] [--parallel N]
                    [--s3-bucket BUCKET] [--s3-prefix PREFIX] [--s3-public]
 
-    Available algorithms: random, greedy, heuristic, expectimax, mcts
+    Available algorithms: random, greedy, heuristic, expectimax, mcts, dqn, ppo
 
     Results are saved under a per-run subdirectory, e.g.::
 
@@ -78,10 +78,12 @@ from pathlib import Path
 
 import argcomplete
 
+from src.algorithms.dqn_algo import DQNAlgorithm
 from src.algorithms.expectimax_algo import ExpectimaxAlgorithm
 from src.algorithms.greedy_algo import GreedyAlgorithm
 from src.algorithms.heuristic_algo import HeuristicAlgorithm
 from src.algorithms.mcts_algo import MCTSAlgorithm
+from src.algorithms.ppo_algo import PPOAlgorithm
 from src.algorithms.random_algo import RandomAlgorithm
 from src.runner import run_games
 from src.visualize import plot_results
@@ -92,6 +94,8 @@ ALGORITHMS = {
     "heuristic": HeuristicAlgorithm,
     "expectimax": ExpectimaxAlgorithm,
     "mcts": MCTSAlgorithm,
+    "dqn": DQNAlgorithm,
+    "ppo": PPOAlgorithm,
 }
 
 _DEFAULT_KEEP = 10
