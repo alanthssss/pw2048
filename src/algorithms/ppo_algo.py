@@ -651,3 +651,332 @@ class PPOAlgorithmV2(BaseAlgorithm):
 
 PPOAlgorithm = PPOAlgorithmV2
 
+
+# ---------------------------------------------------------------------------
+# V3 helpers: one-hot encoding, score-based reward, Adam optimizer
+# (defined locally so ppo_algo.py stays self-contained)
+# ---------------------------------------------------------------------------
+
+_N_LEVELS = 16
+_N_STATE_V3 = 16 * _N_LEVELS  # 256
+
+
+def _encode_board_onehot(board: List[List[int]]) -> np.ndarray:
+    """One-hot encode the board state as a 256-dim float32 vector.
+
+    Each of the 16 cells is represented by a 16-level one-hot vector.
+    The 16 vectors are concatenated into a 256-dim output.
+    """
+    out = np.zeros(_N_STATE_V3, dtype=np.float32)
+    for r in range(4):
+        for c in range(4):
+            v = board[r][c]
+            cell_idx = r * 4 + c
+            level = 0 if v == 0 else min(int(math.log2(v)), _N_LEVELS - 1)
+            out[cell_idx * _N_LEVELS + level] = 1.0
+    return out
+
+
+def _score_reward(
+    prev_board: List[List[int]],
+    action_idx: int,
+    curr_board: List[List[int]],
+) -> float:
+    """Compute a shaped reward based on the actual merge score.
+
+    Replaces the broken V1/V2 heuristic-delta reward.  Components:
+
+    * ``log₂(merge_score + 1)``: 0 for non-merging moves; grows with tile
+      value (e.g. ~4 for two 8s→16, ~8 for two 128s→256).
+    * ``0.1 · empty_count``: small bonus for keeping the board open.
+    """
+    _, score = simulate_move(prev_board, DIRECTIONS[action_idx])
+    empty = sum(1 for r in range(4) for c in range(4) if curr_board[r][c] == 0)
+    return math.log2(score + 1) + 0.1 * empty
+
+
+class _Adam:
+    """Adam optimizer for pure-NumPy parameter arrays."""
+
+    def __init__(
+        self,
+        lr: float = 1e-3,
+        beta1: float = 0.9,
+        beta2: float = 0.999,
+        eps: float = 1e-8,
+    ) -> None:
+        self.lr = lr
+        self._beta1 = beta1
+        self._beta2 = beta2
+        self._eps = eps
+        self._t: int = 0
+        self._m: dict[str, np.ndarray] = {}
+        self._v: dict[str, np.ndarray] = {}
+
+    def step(self, updates: list[tuple[str, np.ndarray, np.ndarray]]) -> None:
+        """Apply one Adam step; each entry is ``(name, param, grad)``."""
+        self._t += 1
+        lr_t = (
+            self.lr
+            * math.sqrt(1.0 - self._beta2 ** self._t)
+            / (1.0 - self._beta1 ** self._t)
+        )
+        for name, param, grad in updates:
+            if name not in self._m:
+                self._m[name] = np.zeros_like(grad)
+                self._v[name] = np.zeros_like(grad)
+            self._m[name] = self._beta1 * self._m[name] + (1.0 - self._beta1) * grad
+            self._v[name] = self._beta2 * self._v[name] + (1.0 - self._beta2) * grad ** 2
+            param -= lr_t * self._m[name] / (np.sqrt(self._v[name]) + self._eps)
+
+
+# ---------------------------------------------------------------------------
+# PPO algorithm – version 3 (PPO-Clip + Adam + one-hot state + score reward)
+# ---------------------------------------------------------------------------
+
+class PPOAlgorithmV3(BaseAlgorithm):
+    """Proximal Policy Optimization – version 3.
+
+    This version fixes all major shortcomings of V1/V2:
+
+    * **One-hot state encoding** (256-dim) instead of 16-dim normalized log₂.
+    * **Score-based reward**: ``log₂(merge_score+1) + 0.1·empty_tiles``
+      instead of the V1/V2 heuristic-delta which *penalised* high-value
+      merges and caused the agent to score below Random.
+    * **Adam optimizer**: replaces vanilla SGD.
+    * **Fixed ``done`` flag**: computed before the invalid-move fallback so
+      terminal states are correctly signalled.
+    * **Game-boundary reset** via :meth:`on_game_start`: prevents corrupt
+      cross-game transitions from polluting the rollout buffer.
+
+    Parameters
+    ----------
+    hidden_size:
+        Number of units in each shared hidden layer.
+    lr:
+        Adam learning rate.
+    gamma:
+        Discount factor for GAE.
+    lam:
+        λ for Generalized Advantage Estimation.
+    clip_eps:
+        PPO clipping parameter ε.
+    n_epochs:
+        Gradient-update epochs per rollout.
+    update_freq:
+        Number of steps per rollout.
+    entropy_coef:
+        Entropy bonus coefficient (higher → more exploration).
+    value_coef:
+        Value-loss coefficient.
+    seed:
+        Optional RNG seed.
+    """
+
+    name = "PPO-v3"
+    version = "v3"
+
+    def __init__(
+        self,
+        hidden_size: int = 256,
+        lr: float = 3e-4,
+        gamma: float = 0.99,
+        lam: float = 0.95,
+        clip_eps: float = 0.2,
+        n_epochs: int = 4,
+        update_freq: int = 256,
+        entropy_coef: float = 0.02,
+        value_coef: float = 0.5,
+        seed: Optional[int] = None,
+    ) -> None:
+        self._rng = random.Random(seed)
+        np_seed = seed if seed is not None else 42
+        self._np_rng = np.random.default_rng(np_seed)
+
+        self._net = _ActorCritic(_N_STATE_V3, hidden_size, self._np_rng)
+        self._optimizer = _Adam(lr=lr)
+
+        self._gamma = gamma
+        self._lam = lam
+        self._clip_eps = clip_eps
+        self._n_epochs = n_epochs
+        self._update_freq = update_freq
+        self._entropy_coef = entropy_coef
+        self._value_coef = value_coef
+
+        self._buf_states: list[np.ndarray] = []
+        self._buf_actions: list[int] = []
+        self._buf_log_probs: list[float] = []
+        self._buf_rewards: list[float] = []
+        self._buf_values: list[float] = []
+        self._buf_dones: list[float] = []
+
+        self._prev_state: Optional[np.ndarray] = None
+        self._prev_action: Optional[int] = None
+        self._prev_log_prob: Optional[float] = None
+        self._prev_value: Optional[float] = None
+        self._prev_board: Optional[List[List[int]]] = None
+
+    # ------------------------------------------------------------------
+    # BaseAlgorithm interface
+    # ------------------------------------------------------------------
+
+    def on_game_start(self) -> None:
+        """Flush the rollout buffer and reset per-game transition state."""
+        self._buf_states.clear()
+        self._buf_actions.clear()
+        self._buf_log_probs.clear()
+        self._buf_rewards.clear()
+        self._buf_values.clear()
+        self._buf_dones.clear()
+        self._prev_state = None
+        self._prev_action = None
+        self._prev_log_prob = None
+        self._prev_value = None
+        self._prev_board = None
+
+    def choose_move(self, board: List[List[int]]) -> str:
+        """Return the next direction sampled from the PPO-v3 policy."""
+        state = _encode_board_onehot(board)
+        valid_dirs = [
+            d for d in DIRECTIONS
+            if not _boards_equal(board, simulate_move(board, d)[0])
+        ]
+        # Compute done flag *before* the fallback override.
+        is_terminal = len(valid_dirs) == 0
+        if not valid_dirs:
+            valid_dirs = list(DIRECTIONS)
+
+        # ----------------------------------------------------------------
+        # Store transition and trigger PPO update when buffer is full
+        # ----------------------------------------------------------------
+        if self._prev_state is not None:
+            reward = _score_reward(self._prev_board, self._prev_action, board)  # type: ignore[arg-type]
+            done = float(is_terminal)
+            self._buf_states.append(self._prev_state)
+            self._buf_actions.append(self._prev_action)          # type: ignore[arg-type]
+            self._buf_log_probs.append(self._prev_log_prob)      # type: ignore[arg-type]
+            self._buf_rewards.append(float(reward))
+            self._buf_values.append(self._prev_value)            # type: ignore[arg-type]
+            self._buf_dones.append(done)
+
+            if len(self._buf_states) >= self._update_freq:
+                _, next_val, *_ = self._net.forward(state)
+                self._ppo_update(float(next_val))
+                self._buf_states.clear()
+                self._buf_actions.clear()
+                self._buf_log_probs.clear()
+                self._buf_rewards.clear()
+                self._buf_values.clear()
+                self._buf_dones.clear()
+
+        # ----------------------------------------------------------------
+        # Policy forward pass — mask invalid actions
+        # ----------------------------------------------------------------
+        logits, value, *_ = self._net.forward(state)
+        valid_idx = [_DIR_INDEX[d] for d in valid_dirs]
+        mask = np.full(_N_ACTIONS, -1e9, dtype=np.float32)
+        mask[valid_idx] = 0.0
+        probs = _softmax(logits + mask)
+
+        action = int(self._np_rng.choice(_N_ACTIONS, p=probs))
+        log_prob = float(np.log(probs[action] + 1e-8))
+
+        self._prev_state = state
+        self._prev_action = action
+        self._prev_log_prob = log_prob
+        self._prev_value = float(value)
+        self._prev_board = [row[:] for row in board]
+
+        return DIRECTIONS[action]
+
+    # ------------------------------------------------------------------
+    # PPO update
+    # ------------------------------------------------------------------
+
+    def _ppo_update(self, next_value: float) -> None:
+        """Run ``n_epochs`` PPO-Clip updates over the collected rollout."""
+        T = len(self._buf_states)
+        if T == 0:
+            return
+
+        states = np.array(self._buf_states, dtype=np.float32)           # (T, 256)
+        actions = np.array(self._buf_actions, dtype=np.int32)            # (T,)
+        old_log_probs = np.array(self._buf_log_probs, dtype=np.float32)  # (T,)
+        rewards = np.array(self._buf_rewards, dtype=np.float32)          # (T,)
+        values = np.array(self._buf_values, dtype=np.float32)            # (T,)
+        dones = np.array(self._buf_dones, dtype=np.float32)              # (T,)
+
+        # Generalized Advantage Estimation (GAE)
+        advantages = np.zeros(T, dtype=np.float32)
+        gae = 0.0
+        for t in reversed(range(T)):
+            next_val = next_value if t == T - 1 else values[t + 1]
+            delta = rewards[t] + self._gamma * next_val * (1.0 - dones[t]) - values[t]
+            gae = delta + self._gamma * self._lam * (1.0 - dones[t]) * gae
+            advantages[t] = gae
+
+        returns = advantages + values
+        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+
+        for _ in range(self._n_epochs):
+            logits, value_pred, h2, z2, h1, z1 = self._net.forward(states)
+            probs_all = _softmax(logits)                                   # (T, 4)
+            log_probs_all = np.log(probs_all + 1e-8)                      # (T, 4)
+            new_log_probs = log_probs_all[np.arange(T), actions]          # (T,)
+
+            ratio = np.exp(new_log_probs - old_log_probs)                  # (T,)
+            surr1 = ratio * advantages
+            surr2 = np.clip(ratio, 1.0 - self._clip_eps, 1.0 + self._clip_eps) * advantages
+
+            # --- Gradient of value loss ---
+            dL_dv = (2.0 * self._value_coef / T) * (value_pred - returns)  # (T,)
+
+            # --- Gradient of policy loss w.r.t. new log-probs ---
+            clipped = (surr1 > surr2).astype(np.float32)
+            dL_d_new_lp = -(1.0 - clipped) * advantages / T               # (T,)
+
+            # --- Gradient of policy loss w.r.t. logits ---
+            dL_d_logits = np.zeros((T, _N_ACTIONS), dtype=np.float32)
+            for i in range(T):
+                grad = -probs_all[i].copy()
+                grad[actions[i]] += 1.0
+                dL_d_logits[i] = dL_d_new_lp[i] * grad
+
+            # --- Entropy bonus gradient w.r.t. logits ---
+            H_t = -(probs_all * log_probs_all).sum(axis=1, keepdims=True)  # (T, 1)
+            dH_d_logits = probs_all * (H_t - log_probs_all)               # (T, 4)
+            dL_d_logits += (-self._entropy_coef / T) * dH_d_logits
+
+            # --- Actor head ---
+            dW_a = h2.T @ dL_d_logits                                      # (hidden, 4)
+            db_a = dL_d_logits.sum(axis=0)                                 # (4,)
+            dL_dh2 = dL_d_logits @ self._net.W_a.T                        # (T, hidden)
+
+            # --- Critic head ---
+            dW_v = h2.T @ dL_dv[:, None]                                   # (hidden, 1)
+            db_v = dL_dv.sum(keepdims=True)                                # (1,)
+            dL_dh2 += dL_dv[:, None] @ self._net.W_v.T                    # (T, hidden)
+
+            # --- Shared hidden layer 2 ---
+            dz2 = dL_dh2 * _relu_grad(z2)                                  # (T, hidden)
+            dW2 = h1.T @ dz2                                               # (hidden, hidden)
+            db2 = dz2.sum(axis=0)                                          # (hidden,)
+
+            # --- Shared hidden layer 1 ---
+            dh1 = dz2 @ self._net.W2.T                                     # (T, hidden)
+            dz1 = dh1 * _relu_grad(z1)                                     # (T, hidden)
+            dW1 = states.T @ dz1                                           # (256, hidden)
+            db1 = dz1.sum(axis=0)                                          # (hidden,)
+
+            self._optimizer.step([
+                ("W1",   self._net.W1,   dW1),
+                ("b1",   self._net.b1,   db1),
+                ("W2",   self._net.W2,   dW2),
+                ("b2",   self._net.b2,   db2),
+                ("W_a",  self._net.W_a,  dW_a),
+                ("b_a",  self._net.b_a,  db_a),
+                ("W_v",  self._net.W_v,  dW_v),
+                ("b_v",  self._net.b_v,  db_v),
+            ])
+

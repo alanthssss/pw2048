@@ -76,6 +76,7 @@ def _run_batch(
 
         for i in range(n_games):
             game.new_game()
+            algorithm.on_game_start()
             t_start = time.perf_counter()
 
             while not game.is_game_over():
@@ -165,6 +166,7 @@ def run_games(
 
             for i in range(n_games):
                 game.new_game()
+                algorithm.on_game_start()
                 t_start = time.perf_counter()
 
                 while not game.is_game_over():
