@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 import pandas as pd
 import pytest
 
-from main import prune_local_results, parse_args, build_run_dir, write_run_metadata
+from main import prune_local_results, parse_args, build_run_dir, write_run_metadata, migrate_legacy_result_dirs
 from src.report import generate_html_report
 
 
@@ -36,6 +36,201 @@ def _make_run_dir_with_png(algo_dir: pathlib.Path, stem: str, n: int = 3) -> pat
     run_dir = _make_run_dir(algo_dir, stem, n)
     (run_dir / "chart.png").write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 16)
     return run_dir
+
+
+# ---------------------------------------------------------------------------
+# migrate_legacy_result_dirs
+# ---------------------------------------------------------------------------
+
+
+def _make_legacy_run_dir(
+    algo_dir: pathlib.Path,
+    stem: str,
+    algo_name: str,
+    version: str = "v1",
+) -> pathlib.Path:
+    """Create a legacy ``run_<stem>/`` directory with realistic file contents.
+
+    The ``metrics.json`` and ``results.csv`` use *algo_name* as if they were
+    written by an old (pre-versioning) code path.
+    """
+    run_dir = algo_dir / f"run_{stem}"
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    # metrics.json — old-style (no versioned name)
+    meta = {
+        "algorithm": algo_name,
+        "algorithm_version": version,
+        "games": 3,
+        "parallel_workers": 1,
+        "timestamp": "2026-03-01T12:00:00Z",
+        "git_commit": "abc1234",
+        "mode": "dev",
+    }
+    (run_dir / "metrics.json").write_text(json.dumps(meta), encoding="utf-8")
+
+    # results.csv — algorithm column uses old name
+    rows = [
+        "run_id,game_index,algorithm,score,best_tile,moves,duration,won,timestamp"
+    ]
+    for i in range(1, 4):
+        rows.append(
+            f"{stem},{i},{algo_name},{i * 100},{2 ** (i + 2)},{50 * i},{i * 0.5},"
+            f"False,2026-03-01T12:00:0{i}Z"
+        )
+    (run_dir / "results.csv").write_text("\n".join(rows), encoding="utf-8")
+    return run_dir
+
+
+class TestMigrateLegacyResultDirs:
+    """Tests for migrate_legacy_result_dirs()."""
+
+    # -----------------------------------------------------------------
+    # Basic rename cases
+    # -----------------------------------------------------------------
+
+    def test_mcts_dir_renamed(self, tmp_path):
+        mcts_dir = tmp_path / "MCTS"
+        _make_legacy_run_dir(mcts_dir, "20260301_120000", "MCTS")
+        migrate_legacy_result_dirs(tmp_path)
+        assert not (tmp_path / "MCTS").exists()
+        assert (tmp_path / "MCTS-v1").exists()
+
+    def test_dqn_dir_renamed(self, tmp_path):
+        dqn_dir = tmp_path / "DQN"
+        _make_legacy_run_dir(dqn_dir, "20260301_120000", "DQN")
+        migrate_legacy_result_dirs(tmp_path)
+        assert not (tmp_path / "DQN").exists()
+        assert (tmp_path / "DQN-v1").exists()
+
+    def test_ppo_dir_renamed(self, tmp_path):
+        ppo_dir = tmp_path / "PPO"
+        _make_legacy_run_dir(ppo_dir, "20260301_120000", "PPO")
+        migrate_legacy_result_dirs(tmp_path)
+        assert not (tmp_path / "PPO").exists()
+        assert (tmp_path / "PPO-v1").exists()
+
+    def test_run_dirs_preserved_after_rename(self, tmp_path):
+        mcts_dir = tmp_path / "MCTS"
+        _make_legacy_run_dir(mcts_dir, "20260301_120000", "MCTS")
+        _make_legacy_run_dir(mcts_dir, "20260302_120000", "MCTS")
+        migrate_legacy_result_dirs(tmp_path)
+        new_dir = tmp_path / "MCTS-v1"
+        run_dirs = [d for d in new_dir.iterdir() if d.name.startswith("run_")]
+        assert len(run_dirs) == 2
+
+    # -----------------------------------------------------------------
+    # metrics.json patch
+    # -----------------------------------------------------------------
+
+    def test_metrics_json_algorithm_field_updated(self, tmp_path):
+        mcts_dir = tmp_path / "MCTS"
+        _make_legacy_run_dir(mcts_dir, "20260301_120000", "MCTS")
+        migrate_legacy_result_dirs(tmp_path)
+        meta_path = tmp_path / "MCTS-v1" / "run_20260301_120000" / "metrics.json"
+        meta = json.loads(meta_path.read_text())
+        assert meta["algorithm"] == "MCTS-v1"
+
+    def test_metrics_json_version_unchanged(self, tmp_path):
+        dqn_dir = tmp_path / "DQN"
+        _make_legacy_run_dir(dqn_dir, "20260301_120000", "DQN", version="v1")
+        migrate_legacy_result_dirs(tmp_path)
+        meta = json.loads(
+            (tmp_path / "DQN-v1" / "run_20260301_120000" / "metrics.json")
+            .read_text()
+        )
+        assert meta["algorithm_version"] == "v1"
+
+    # -----------------------------------------------------------------
+    # results.csv patch
+    # -----------------------------------------------------------------
+
+    def test_results_csv_algorithm_column_updated(self, tmp_path):
+        ppo_dir = tmp_path / "PPO"
+        _make_legacy_run_dir(ppo_dir, "20260301_120000", "PPO")
+        migrate_legacy_result_dirs(tmp_path)
+        df = pd.read_csv(
+            tmp_path / "PPO-v1" / "run_20260301_120000" / "results.csv"
+        )
+        assert (df["algorithm"] == "PPO-v1").all()
+
+    # -----------------------------------------------------------------
+    # Merge case — both old and new dirs exist
+    # -----------------------------------------------------------------
+
+    def test_run_dirs_merged_when_new_dir_already_exists(self, tmp_path):
+        old_dir = tmp_path / "MCTS"
+        new_dir = tmp_path / "MCTS-v1"
+        _make_legacy_run_dir(old_dir, "20260301_120000", "MCTS")
+        # Pre-existing new dir with a *different* timestamp
+        _make_legacy_run_dir(new_dir, "20260302_120000", "MCTS-v1")
+        migrate_legacy_result_dirs(tmp_path)
+        assert not old_dir.exists(), "old dir should be removed after merge"
+        run_dirs = [d for d in new_dir.iterdir() if d.name.startswith("run_")]
+        assert len(run_dirs) == 2, "both run dirs should end up in new dir"
+
+    def test_merge_does_not_overwrite_existing_run(self, tmp_path):
+        old_dir = tmp_path / "MCTS"
+        new_dir = tmp_path / "MCTS-v1"
+        # Same timestamp in both — old's run should NOT overwrite new's run.
+        _make_legacy_run_dir(old_dir, "20260301_120000", "MCTS")
+        _make_legacy_run_dir(new_dir, "20260301_120000", "MCTS-v1")
+        migrate_legacy_result_dirs(tmp_path)
+        # New dir's run_20260301_120000 should still hold the new-dir version
+        df = pd.read_csv(new_dir / "run_20260301_120000" / "results.csv")
+        assert (df["algorithm"] == "MCTS-v1").all()
+
+    # -----------------------------------------------------------------
+    # Idempotency / edge cases
+    # -----------------------------------------------------------------
+
+    def test_idempotent_on_missing_dir(self, tmp_path):
+        """No error and empty list when there is nothing to migrate."""
+        migrated = migrate_legacy_result_dirs(tmp_path)
+        assert migrated == []
+
+    def test_idempotent_on_second_call(self, tmp_path):
+        mcts_dir = tmp_path / "MCTS"
+        _make_legacy_run_dir(mcts_dir, "20260301_120000", "MCTS")
+        migrate_legacy_result_dirs(tmp_path)
+        # Second call should be a no-op (old dir is gone).
+        migrated2 = migrate_legacy_result_dirs(tmp_path)
+        assert migrated2 == []
+
+    def test_non_legacy_dirs_untouched(self, tmp_path):
+        (tmp_path / "Random").mkdir()
+        (tmp_path / "Expectimax").mkdir()
+        migrate_legacy_result_dirs(tmp_path)
+        assert (tmp_path / "Random").exists()
+        assert (tmp_path / "Expectimax").exists()
+
+    def test_returns_list_of_migrated_paths(self, tmp_path):
+        for old in ("MCTS", "DQN", "PPO"):
+            _make_legacy_run_dir(tmp_path / old, "20260301_120000", old)
+        migrated = migrate_legacy_result_dirs(tmp_path)
+        assert len(migrated) == 3
+        names = {p.name for p in migrated}
+        assert names == {"MCTS-v1", "DQN-v1", "PPO-v1"}
+
+    def test_nonexistent_results_dir_is_noop(self, tmp_path):
+        migrated = migrate_legacy_result_dirs(tmp_path / "no_such_dir")
+        assert migrated == []
+
+    # -----------------------------------------------------------------
+    # Integration: report generation uses migrated names
+    # -----------------------------------------------------------------
+
+    def test_report_shows_versioned_name_after_migration(self, tmp_path):
+        """generate_html_report() must trigger migration and show 'MCTS-v1' not 'MCTS'."""
+        mcts_dir = tmp_path / "MCTS"
+        _make_legacy_run_dir(mcts_dir, "20260301_120000", "MCTS")
+        report_path = tmp_path / "index.html"
+        generate_html_report(tmp_path, report_path)
+        content = report_path.read_text()
+        # Old directory name must not appear as a section heading
+        assert "algo-mcts\">" not in content, "unversioned 'MCTS' section still present"
+        # New versioned name should appear
+        assert "MCTS-v1" in content
 
 
 # ---------------------------------------------------------------------------

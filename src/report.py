@@ -1210,6 +1210,11 @@ def generate_html_report(
     results_dir = Path(results_dir)
     output_path = Path(output_path)
 
+    # Migrate any pre-versioning result directories before scanning.
+    # Import locally to avoid a circular dependency.
+    from main import migrate_legacy_result_dirs
+    migrate_legacy_result_dirs(results_dir)
+
     algo_dirs = sorted(
         p for p in results_dir.iterdir() if p.is_dir()
     ) if results_dir.exists() else []

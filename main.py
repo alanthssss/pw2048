@@ -217,6 +217,127 @@ def write_run_metadata(
     return path
 
 
+# Algorithm directories that were created before the versioning refactoring.
+# Each old name maps to the correct versioned name it should be migrated to.
+_LEGACY_NAME_MAP: dict[str, str] = {
+    "MCTS": "MCTS-v1",
+    "DQN":  "DQN-v1",
+    "PPO":  "PPO-v1",
+}
+
+
+def migrate_legacy_result_dirs(results_dir: str | Path) -> list[Path]:
+    """Rename pre-versioning algorithm result directories to their ``*-v1`` equivalents.
+
+    When the DQN / PPO / MCTS algorithm classes were refactored to expose
+    ``V1`` / ``V2`` variants the on-disk directory names changed
+    (``results/MCTS/`` → ``results/MCTS-v1/`` etc.).  Results created
+    *before* that refactoring are still stored under the old unversioned names
+    and will appear with stale labels in the HTML report.
+
+    This function performs a one-time, idempotent migration:
+
+    * If ``results/{old}/`` exists and ``results/{new}/`` does **not**, the
+      directory is simply renamed.
+    * If both ``results/{old}/`` and ``results/{new}/`` already exist, every
+      ``run_*/`` subdirectory inside the old directory is moved into the new
+      one (timestamps guarantee they won't collide) and the now-empty old
+      directory is removed.
+
+    In both cases the ``metrics.json`` files inside the run directories have
+    their ``"algorithm"`` field updated to the new name, and the
+    ``"algorithm"`` column in every ``results.csv`` is patched accordingly.
+
+    Parameters
+    ----------
+    results_dir:
+        Root results directory (e.g. ``"results"``).
+
+    Returns
+    -------
+    list[Path]
+        List of directory paths that were migrated (moved / renamed).
+    """
+    results_dir = Path(results_dir)
+    migrated: list[Path] = []
+
+    for old_name, new_name in _LEGACY_NAME_MAP.items():
+        old_dir = results_dir / old_name
+        if not old_dir.exists():
+            continue
+
+        new_dir = results_dir / new_name
+
+        if not new_dir.exists():
+            # Simple rename — no conflicts possible.
+            old_dir.rename(new_dir)
+            migrated.append(new_dir)
+        else:
+            # Both exist — move run_* subdirs from old into new.
+            run_dirs = [
+                d for d in old_dir.iterdir()
+                if d.is_dir() and d.name.startswith("run_")
+            ]
+            for run_dir in run_dirs:
+                dest = new_dir / run_dir.name
+                if not dest.exists():
+                    run_dir.rename(dest)
+                    migrated.append(dest)
+            # Remove old directory if now empty (ignoring hidden files).
+            remaining = [p for p in old_dir.iterdir() if not p.name.startswith(".")]
+            if not remaining:
+                old_dir.rmdir()
+
+        # Patch metrics.json and results.csv inside every moved run dir.
+        _patch_run_dir_names(new_dir, old_name, new_name)
+
+    if migrated:
+        print(
+            f"  Migrated legacy result dir(s): "
+            + ", ".join(f"'{_LEGACY_NAME_MAP[n]}'" for n in _LEGACY_NAME_MAP
+                        if (results_dir / _LEGACY_NAME_MAP[n]) in
+                        [m.parent if m.name.startswith("run_") else m
+                         for m in migrated])
+        )
+    return migrated
+
+
+def _patch_run_dir_names(algo_dir: Path, old_name: str, new_name: str) -> None:
+    """Update ``metrics.json`` and ``results.csv`` inside *algo_dir* run dirs.
+
+    Replaces the old algorithm name string with the new one so that every
+    stored file reflects the current versioned naming.
+    """
+    if not algo_dir.exists():
+        return
+    for run_dir in algo_dir.iterdir():
+        if not (run_dir.is_dir() and run_dir.name.startswith("run_")):
+            continue
+
+        # Patch metrics.json — update "algorithm" field.
+        meta_path = run_dir / "metrics.json"
+        if meta_path.exists():
+            try:
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
+                if meta.get("algorithm") == old_name:
+                    meta["algorithm"] = new_name
+                    meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+            except Exception:
+                pass
+
+        # Patch results.csv — update "algorithm" column values.
+        csv_path = run_dir / "results.csv"
+        if csv_path.exists():
+            try:
+                import pandas as _pd
+                df = _pd.read_csv(csv_path)
+                if "algorithm" in df.columns:
+                    df["algorithm"] = df["algorithm"].replace(old_name, new_name)
+                    df.to_csv(csv_path, index=False)
+            except Exception:
+                pass
+
+
 def prune_local_results(output_dir: Path, keep_n: int) -> list[Path]:
     """Delete old run directories, keeping only the latest *keep_n* runs.
 
@@ -405,6 +526,10 @@ def main(argv: list[str] | None = None) -> None:
 
     algo_cls = ALGORITHMS[args.algorithm]
     algorithm = algo_cls()
+
+    # Migrate any pre-versioning result directories (e.g. MCTS/ → MCTS-v1/) so
+    # the HTML report always shows clean, versioned algorithm names.
+    migrate_legacy_result_dirs(args.output)
 
     algo_dir = build_output_dir(args.output, algorithm.name)
     algo_dir.mkdir(parents=True, exist_ok=True)
