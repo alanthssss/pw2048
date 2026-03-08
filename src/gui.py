@@ -17,7 +17,7 @@ import os
 # Constants (mirror main.py to avoid circular imports)
 # ---------------------------------------------------------------------------
 
-_ALGORITHMS = ["random", "greedy", "heuristic", "expectimax", "mcts"]
+_ALGORITHMS = ["random", "greedy", "heuristic", "expectimax", "mcts", "dqn", "ppo"]
 _DEFAULT_KEEP = 10
 _DEFAULT_GAMES = 20
 _DEFAULT_RUNS = 1
@@ -48,7 +48,7 @@ def _build_argv(
     ----------
     algorithm:
         One of ``"random"``, ``"greedy"``, ``"heuristic"``, ``"expectimax"``,
-        ``"mcts"``.
+        ``"mcts"``, ``"dqn"``, ``"ppo"``.
     mode_choice:
         ``"custom"`` or one of the preset names (``"dev"``, ``"release"``,
         ``"benchmark"``).

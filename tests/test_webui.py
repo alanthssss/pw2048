@@ -183,6 +183,18 @@ class TestFormToArgvParseable:
         args = parse_args(_form_to_argv(_form(algorithm="mcts")))
         assert args.algorithm == "mcts"
 
+    def test_dqn_argv_valid(self):
+        from main import parse_args
+
+        args = parse_args(_form_to_argv(_form(algorithm="dqn")))
+        assert args.algorithm == "dqn"
+
+    def test_ppo_argv_valid(self):
+        from main import parse_args
+
+        args = parse_args(_form_to_argv(_form(algorithm="ppo")))
+        assert args.algorithm == "ppo"
+
 
 # ---------------------------------------------------------------------------
 # Tests: HTTP server integration
@@ -296,7 +308,7 @@ class TestWebUIServer:
     def test_html_form_contains_algorithm_options(self):
         from src.webui import _HTML_FORM
 
-        for algo in ("random", "greedy", "heuristic", "expectimax", "mcts"):
+        for algo in ("random", "greedy", "heuristic", "expectimax", "mcts", "dqn", "ppo"):
             assert algo in _HTML_FORM
 
     def test_html_form_uses_2048_palette(self):

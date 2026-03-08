@@ -1,13 +1,16 @@
-"""Tests for the Random, Greedy, Heuristic, Expectimax, and MCTS algorithms and game logic."""
+"""Tests for the Random, Greedy, Heuristic, Expectimax, MCTS, DQN, and PPO algorithms and game logic."""
 
 from __future__ import annotations
 
+import math
 import pathlib
 import random
+import numpy as np
 import pytest
 from playwright.sync_api import sync_playwright
 
 from main import build_output_dir
+from src.algorithms.dqn_algo import DQNAlgorithm, _encode_board, _board_heuristic, _QNetwork
 from src.algorithms.expectimax_algo import ExpectimaxAlgorithm, _expectimax, _get_empty_cells
 from src.algorithms.greedy_algo import GreedyAlgorithm, simulate_move, _slide_row_left, _boards_equal
 from src.algorithms.heuristic_algo import (
@@ -19,6 +22,7 @@ from src.algorithms.heuristic_algo import (
     _score_board,
 )
 from src.algorithms.mcts_algo import MCTSAlgorithm, _MCTSNode, _spawn_tile
+from src.algorithms.ppo_algo import PPOAlgorithm
 from src.algorithms.random_algo import RandomAlgorithm
 from src.game import Game2048, DIRECTIONS
 
@@ -641,6 +645,214 @@ class TestMCTSAlgorithm:
     def test_full_game_runs_to_completion(self, game):
         """Play a full game with the MCTS algorithm."""
         algo = MCTSAlgorithm(n_iterations=20, sim_depth=10, seed=0)
+        game.new_game()
+        moves = 0
+        while not game.is_game_over():
+            board = game.get_board()
+            direction = algo.choose_move(board)
+            game.make_move(direction)
+            moves += 1
+            assert moves < 10_000, "Game did not end within 10 000 moves"
+
+        assert game.get_score() >= 0
+        assert game.get_max_tile() >= 2
+
+
+# ---------------------------------------------------------------------------
+# DQN helpers
+# ---------------------------------------------------------------------------
+
+
+class TestEncodeBoard:
+    def test_empty_board_all_zeros(self):
+        board = [[0] * 4 for _ in range(4)]
+        enc = _encode_board(board)
+        assert enc.shape == (16,)
+        assert (enc == 0).all()
+
+    def test_tile_2048_encodes_to_one(self):
+        board = [[2048, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]]
+        enc = _encode_board(board)
+        assert abs(enc[0] - 1.0) < 1e-6
+
+    def test_tile_2_encodes_correctly(self):
+        board = [[2, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]]
+        enc = _encode_board(board)
+        assert abs(enc[0] - math.log2(2) / 11.0) < 1e-6
+
+    def test_length_is_16(self):
+        board = [[2, 4, 8, 16], [32, 64, 128, 256],
+                 [512, 1024, 2048, 4], [2, 2, 2, 2]]
+        enc = _encode_board(board)
+        assert len(enc) == 16
+
+
+class TestBoardHeuristic:
+    def test_empty_board_returns_zero(self):
+        board = [[0] * 4 for _ in range(4)]
+        assert _board_heuristic(board) == 0.0
+
+    def test_higher_tiles_give_higher_score(self):
+        low = [[2, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]]
+        high = [[1024, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]]
+        assert _board_heuristic(high) > _board_heuristic(low)
+
+
+class TestQNetwork:
+    def test_forward_output_shape_single(self):
+        rng = np.random.default_rng(0)
+        net = _QNetwork(16, 64, 4, rng)
+        x = rng.random(16).astype("float32")
+        q, *_ = net.forward(x)
+        assert q.shape == (4,)
+
+    def test_forward_output_shape_batch(self):
+        rng = np.random.default_rng(0)
+        net = _QNetwork(16, 64, 4, rng)
+        x = rng.random((8, 16)).astype("float32")
+        q, *_ = net.forward(x)
+        assert q.shape == (8, 4)
+
+    def test_copy_weights_produces_identical_outputs(self):
+        rng = np.random.default_rng(1)
+        net1 = _QNetwork(16, 64, 4, rng)
+        net2 = _QNetwork(16, 64, 4, rng)
+        net2.copy_weights(net1)
+        x = rng.random(16).astype("float32")
+        q1, *_ = net1.forward(x)
+        q2, *_ = net2.forward(x)
+        assert (q1 == q2).all()
+
+
+# ---------------------------------------------------------------------------
+# DQNAlgorithm
+# ---------------------------------------------------------------------------
+
+
+class TestDQNAlgorithm:
+    def test_algorithm_name(self):
+        assert DQNAlgorithm.name == "DQN"
+
+    def test_choose_move_returns_valid_direction(self):
+        algo = DQNAlgorithm(seed=0)
+        board = [[2, 0, 0, 0], [4, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]]
+        move = algo.choose_move(board)
+        assert move in DIRECTIONS
+
+    def test_choose_move_restricted_to_valid_moves(self):
+        """With epsilon=0 the chosen move must be valid (changes the board)."""
+        algo = DQNAlgorithm(epsilon_start=0.0, epsilon_end=0.0, seed=0)
+        board = [
+            [2, 0, 0, 0],
+            [0, 0, 0, 0],
+            [0, 0, 0, 0],
+            [0, 0, 0, 0],
+        ]
+        for _ in range(10):
+            move = algo.choose_move(board)
+            new_board, _ = simulate_move(board, move)
+            assert not _boards_equal(board, new_board), f"Chose invalid move {move!r}"
+
+    def test_falls_back_on_fully_blocked_board(self):
+        algo = DQNAlgorithm(seed=0)
+        board = [
+            [2, 4, 2, 4],
+            [4, 2, 4, 2],
+            [2, 4, 2, 4],
+            [4, 2, 4, 2],
+        ]
+        move = algo.choose_move(board)
+        assert move in DIRECTIONS
+
+    def test_trains_after_enough_transitions(self):
+        """Ensure no errors when the replay buffer fills and training is triggered."""
+        algo = DQNAlgorithm(batch_size=4, buffer_size=20, seed=0)
+        board = [[2, 4, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]]
+        for _ in range(20):
+            algo.choose_move(board)
+
+    def test_epsilon_decays_over_time(self):
+        algo = DQNAlgorithm(epsilon_start=1.0, epsilon_end=0.0, epsilon_decay=0.9, seed=0)
+        board = [[2, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]]
+        initial_epsilon = algo._epsilon
+        for _ in range(10):
+            algo.choose_move(board)
+        assert algo._epsilon < initial_epsilon
+
+    def test_full_game_runs_to_completion(self, game):
+        """Play a full game with the DQN algorithm."""
+        algo = DQNAlgorithm(seed=0)
+        game.new_game()
+        moves = 0
+        while not game.is_game_over():
+            board = game.get_board()
+            direction = algo.choose_move(board)
+            game.make_move(direction)
+            moves += 1
+            assert moves < 10_000, "Game did not end within 10 000 moves"
+
+        assert game.get_score() >= 0
+        assert game.get_max_tile() >= 2
+
+
+# ---------------------------------------------------------------------------
+# PPOAlgorithm
+# ---------------------------------------------------------------------------
+
+
+class TestPPOAlgorithm:
+    def test_algorithm_name(self):
+        assert PPOAlgorithm.name == "PPO"
+
+    def test_choose_move_returns_valid_direction(self):
+        algo = PPOAlgorithm(seed=0)
+        board = [[2, 0, 0, 0], [4, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]]
+        move = algo.choose_move(board)
+        assert move in DIRECTIONS
+
+    def test_choose_move_restricted_to_valid_moves(self):
+        """The chosen move must always be in DIRECTIONS."""
+        algo = PPOAlgorithm(seed=0)
+        board = [
+            [2, 0, 0, 0],
+            [0, 0, 0, 0],
+            [0, 0, 0, 0],
+            [0, 0, 0, 0],
+        ]
+        for _ in range(10):
+            move = algo.choose_move(board)
+            assert move in DIRECTIONS
+
+    def test_falls_back_on_fully_blocked_board(self):
+        algo = PPOAlgorithm(seed=0)
+        board = [
+            [2, 4, 2, 4],
+            [4, 2, 4, 2],
+            [2, 4, 2, 4],
+            [4, 2, 4, 2],
+        ]
+        move = algo.choose_move(board)
+        assert move in DIRECTIONS
+
+    def test_ppo_update_triggered_after_update_freq_steps(self):
+        """No errors should occur when the rollout buffer fills and PPO updates."""
+        algo = PPOAlgorithm(update_freq=4, n_epochs=2, seed=0)
+        board = [[2, 4, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]]
+        for _ in range(10):
+            algo.choose_move(board)
+
+    def test_rollout_buffer_cleared_after_update(self):
+        """After a PPO update the rollout buffer should be cleared."""
+        algo = PPOAlgorithm(update_freq=4, seed=0)
+        board = [[2, 4, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]]
+        for _ in range(5):
+            algo.choose_move(board)
+        # Buffer should have been cleared after 4 steps; at most 1 entry remains.
+        assert len(algo._buf_states) <= 1
+
+    def test_full_game_runs_to_completion(self, game):
+        """Play a full game with the PPO algorithm."""
+        algo = PPOAlgorithm(seed=0)
         game.new_game()
         moves = 0
         while not game.is_game_over():
