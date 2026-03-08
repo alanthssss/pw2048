@@ -27,6 +27,8 @@ _DEFAULT_KEEP = 10
 _DEFAULT_GAMES = 20
 _DEFAULT_RUNS = 1
 _DEFAULT_PARALLEL = 1
+_DEFAULT_EVAL_FREQ = 50
+_DEFAULT_N_EVAL_GAMES = 20
 
 
 # ---------------------------------------------------------------------------
@@ -48,6 +50,10 @@ def _build_argv(
     s3_public: bool,
     version: str = "",
     checkpoint_dir: str = "",
+    train_games: str = "0",
+    eval_freq: str = str(_DEFAULT_EVAL_FREQ),
+    n_eval_games: str = str(_DEFAULT_N_EVAL_GAMES),
+    tensorboard_dir: str = "",
 ) -> list[str]:
     """Convert GUI form values to an argv list for :func:`main.parse_args`.
 
@@ -81,6 +87,14 @@ def _build_argv(
     checkpoint_dir:
         Optional checkpoint directory for DQN/PPO persistence.  Empty string
         → omit flag.
+    train_games:
+        Number of fast in-process training games (``"0"`` → omit flag).
+    eval_freq:
+        EvalCallback frequency used when *train_games* > 0.
+    n_eval_games:
+        Number of eval games per EvalCallback round.
+    tensorboard_dir:
+        TensorBoard / CSV log directory.  Empty string → omit flag.
 
     Returns
     -------
@@ -96,6 +110,14 @@ def _build_argv(
         argv += ["--algo-version", version.strip()]
     if checkpoint_dir.strip():
         argv += ["--checkpoint-dir", checkpoint_dir.strip()]
+    if train_games.strip() and int(train_games.strip()) > 0:
+        argv += [
+            "--train-games", train_games.strip(),
+            "--eval-freq", eval_freq.strip() or str(_DEFAULT_EVAL_FREQ),
+            "--n-eval-games", n_eval_games.strip() or str(_DEFAULT_N_EVAL_GAMES),
+        ]
+        if tensorboard_dir.strip():
+            argv += ["--tensorboard-dir", tensorboard_dir.strip()]
     if mode_choice != "custom":
         argv += ["--mode", mode_choice]
     else:
@@ -286,6 +308,62 @@ def run_gui() -> list[str]:
 
     _sep()
 
+    # ── RL Training (DQN / PPO only) ──────────────────────────────────────
+    ttk.Label(outer, text="RL Training (DQN / PPO only)", font=("", 9, "italic")).grid(
+        row=row, column=0, columnspan=3, sticky="w", **PAD
+    )
+    row += 1
+
+    _label("Train games:")
+    train_games_var = tk.StringVar(value="0")
+    ttk.Entry(outer, textvariable=train_games_var, width=10).grid(
+        row=row, column=1, sticky="w", **PAD
+    )
+    ttk.Label(outer, text="(0 = skip; in-process, no browser)", font=("", 8, "italic")).grid(
+        row=row, column=2, sticky="w", **PAD
+    )
+    row += 1
+
+    _label("Eval freq:")
+    eval_freq_var = tk.StringVar(value=str(_DEFAULT_EVAL_FREQ))
+    ttk.Entry(outer, textvariable=eval_freq_var, width=10).grid(
+        row=row, column=1, sticky="w", **PAD
+    )
+    ttk.Label(outer, text="(eval every N train games)", font=("", 8, "italic")).grid(
+        row=row, column=2, sticky="w", **PAD
+    )
+    row += 1
+
+    _label("Eval games:")
+    n_eval_games_var = tk.StringVar(value=str(_DEFAULT_N_EVAL_GAMES))
+    ttk.Entry(outer, textvariable=n_eval_games_var, width=10).grid(
+        row=row, column=1, sticky="w", **PAD
+    )
+    row += 1
+
+    _label("TensorBoard dir:")
+    tensorboard_var = tk.StringVar(value="")
+    ttk.Entry(outer, textvariable=tensorboard_var, width=24).grid(
+        row=row, column=1, sticky="w", **PAD
+    )
+    ttk.Button(
+        outer,
+        text="Browse…",
+        command=lambda: tensorboard_var.set(
+            filedialog.askdirectory(initialdir=tensorboard_var.get() or ".")
+            or tensorboard_var.get()
+        ),
+    ).grid(row=row, column=2, sticky="w", **PAD)
+    row += 1
+    ttk.Label(
+        outer,
+        text="(blank → disabled; CSV + TensorBoard logs)",
+        font=("", 8, "italic"),
+    ).grid(row=row, column=1, columnspan=2, sticky="w", **PAD)
+    row += 1
+
+    _sep()
+
     # ── Misc options ──────────────────────────────────────────────────────
     _label("Show browser:")
     show_var = tk.BooleanVar(value=False)
@@ -364,6 +442,16 @@ def run_gui() -> list[str]:
             if not positive_only and int(val) < 0:
                 err_var.set(f"'{field_label}' must be 0 or greater.")
                 return
+        # Validate RL training fields
+        for field_label, var in [
+            ("Train games", train_games_var),
+            ("Eval freq", eval_freq_var),
+            ("Eval games", n_eval_games_var),
+        ]:
+            val = var.get().strip()
+            if not val.isdigit():
+                err_var.set(f"'{field_label}' must be an integer (got '{val}').")
+                return
 
         argv = _build_argv(
             algorithm=algo_var.get(),
@@ -380,6 +468,10 @@ def run_gui() -> list[str]:
             s3_public=bool(s3_public_var.get()),
             version=version_var.get(),
             checkpoint_dir=checkpoint_var.get(),
+            train_games=train_games_var.get().strip(),
+            eval_freq=eval_freq_var.get().strip(),
+            n_eval_games=n_eval_games_var.get().strip(),
+            tensorboard_dir=tensorboard_var.get().strip(),
         )
         result.append(argv)
         root.destroy()

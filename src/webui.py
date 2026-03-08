@@ -26,6 +26,8 @@ _DEFAULT_KEEP = 10
 _DEFAULT_GAMES = 20
 _DEFAULT_RUNS = 1
 _DEFAULT_PARALLEL = 1
+_DEFAULT_EVAL_FREQ = 50
+_DEFAULT_N_EVAL_GAMES = 20
 
 # ---------------------------------------------------------------------------
 # HTML pages — loaded from src/templates/ so styling lives in dedicated files
@@ -76,6 +78,17 @@ def _form_to_argv(form: dict[str, list[str]]) -> list[str]:
 
     if checkpoint_dir:
         argv += ["--checkpoint-dir", checkpoint_dir]
+
+    train_games = _get("train_games", "0").strip()
+    if train_games and int(train_games) > 0:
+        argv += [
+            "--train-games", train_games,
+            "--eval-freq", _get("eval_freq", str(_DEFAULT_EVAL_FREQ)).strip() or str(_DEFAULT_EVAL_FREQ),
+            "--n-eval-games", _get("n_eval_games", str(_DEFAULT_N_EVAL_GAMES)).strip() or str(_DEFAULT_N_EVAL_GAMES),
+        ]
+        tensorboard_dir = _get("tensorboard_dir", "").strip()
+        if tensorboard_dir:
+            argv += ["--tensorboard-dir", tensorboard_dir]
 
     if mode_choice != "custom":
         argv += ["--mode", mode_choice]

@@ -32,6 +32,11 @@ def _mock_answers(**overrides):
         "report": False,
         "use_s3": False,
         "proceed": True,
+        # RL training (DQN/PPO only)
+        "train_games": "0",
+        "eval_freq": "50",
+        "n_eval_games": "20",
+        "tensorboard_dir": "",
     }
     defaults.update(overrides)
     return defaults
@@ -64,14 +69,26 @@ def _patch_tui(answers: dict):
             m = MagicMock()
             prompt = args[0] if args else kwargs.get("message", "")
             prompt_lower = prompt.lower()
-            if "games" in prompt_lower:
+            if "version" in prompt_lower:
+                m.ask.return_value = answers.get("version_tag", "")
+            elif "number of games per run" in prompt_lower:
                 m.ask.return_value = answers["games"]
             elif "number of runs" in prompt_lower:
                 m.ask.return_value = answers["runs"]
             elif "parallel" in prompt_lower:
                 m.ask.return_value = answers["parallel"]
-            elif "output" in prompt_lower:
+            elif "output directory" in prompt_lower:
                 m.ask.return_value = answers["output"]
+            elif "checkpoint directory" in prompt_lower:
+                m.ask.return_value = answers.get("checkpoint_dir", "")
+            elif "fast training games" in prompt_lower or "training games" in prompt_lower:
+                m.ask.return_value = answers["train_games"]
+            elif "eval frequency" in prompt_lower:
+                m.ask.return_value = answers["eval_freq"]
+            elif "eval games per round" in prompt_lower:
+                m.ask.return_value = answers["n_eval_games"]
+            elif "tensorboard" in prompt_lower:
+                m.ask.return_value = answers["tensorboard_dir"]
             elif "keep" in prompt_lower:
                 m.ask.return_value = answers["keep_str"]
             elif "bucket" in prompt_lower:
@@ -314,3 +331,76 @@ class TestRunTuiArgvParseable:
             argv = run_tui()
         args = parse_args(argv)
         assert args.algorithm == "ppo"
+
+
+# ---------------------------------------------------------------------------
+# Tests: RL training flags in run_tui
+# ---------------------------------------------------------------------------
+
+
+class TestRunTuiRLTraining:
+    """New RL training prompts shown for DQN/PPO algorithms."""
+
+    def test_no_train_games_flag_for_non_rl(self):
+        """Non-RL algorithms should never emit --train-games."""
+        with _patch_tui(_mock_answers(algorithm="random", train_games="100")):
+            result = run_tui()
+        assert "--train-games" not in result
+
+    def test_no_train_games_flag_when_zero(self):
+        """DQN with train_games=0 must not include --train-games."""
+        with _patch_tui(_mock_answers(algorithm="dqn", train_games="0")):
+            result = run_tui()
+        assert "--train-games" not in result
+
+    def test_train_games_present_for_dqn(self):
+        with _patch_tui(_mock_answers(algorithm="dqn", train_games="500")):
+            result = run_tui()
+        assert "--train-games" in result
+        assert result[result.index("--train-games") + 1] == "500"
+
+    def test_train_games_present_for_ppo(self):
+        with _patch_tui(_mock_answers(algorithm="ppo", train_games="200")):
+            result = run_tui()
+        assert "--train-games" in result
+
+    def test_eval_freq_included_with_train_games(self):
+        with _patch_tui(_mock_answers(algorithm="dqn", train_games="100", eval_freq="25")):
+            result = run_tui()
+        assert "--eval-freq" in result
+        assert result[result.index("--eval-freq") + 1] == "25"
+
+    def test_n_eval_games_included_with_train_games(self):
+        with _patch_tui(_mock_answers(algorithm="dqn", train_games="100", n_eval_games="10")):
+            result = run_tui()
+        assert "--n-eval-games" in result
+        assert result[result.index("--n-eval-games") + 1] == "10"
+
+    def test_tensorboard_dir_included_when_set(self):
+        with _patch_tui(_mock_answers(algorithm="dqn", train_games="100", tensorboard_dir="tb")):
+            result = run_tui()
+        assert "--tensorboard-dir" in result
+        assert result[result.index("--tensorboard-dir") + 1] == "tb"
+
+    def test_tensorboard_dir_absent_when_empty(self):
+        with _patch_tui(_mock_answers(algorithm="dqn", train_games="100", tensorboard_dir="")):
+            result = run_tui()
+        assert "--tensorboard-dir" not in result
+
+    def test_rl_argv_parseable(self):
+        from main import parse_args
+
+        with _patch_tui(_mock_answers(
+            algorithm="dqn",
+            train_games="200",
+            eval_freq="50",
+            n_eval_games="10",
+            tensorboard_dir="tb_logs",
+        )):
+            argv = run_tui()
+        args = parse_args(argv)
+        assert args.train_games == 200
+        assert args.eval_freq == 50
+        assert args.n_eval_games == 10
+        assert args.tensorboard_dir == "tb_logs"
+

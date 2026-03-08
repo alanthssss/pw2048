@@ -175,6 +175,52 @@ def run_tui() -> list[str]:
     if checkpoint_dir is None:
         raise SystemExit(0)
 
+    # ── RL Training (learning algorithms only) ────────────────────────────────
+    _is_rl = algorithm.startswith("dqn") or algorithm.startswith("ppo")
+    train_games_str = "0"
+    eval_freq_str = "50"
+    n_eval_games_str = "20"
+    tensorboard_dir = ""
+    if _is_rl:
+        _console.print(
+            "\n[dim]── RL Training (DQN / PPO only) ──[/]\n",
+        )
+        train_games_str = questionary.text(
+            "Fast training games — in-process, no browser (0 = skip):",
+            default="0",
+            validate=_non_neg_int,
+            style=_STYLE,
+        ).ask()
+        if train_games_str is None:
+            raise SystemExit(0)
+
+        if int(train_games_str) > 0:
+            eval_freq_str = questionary.text(
+                "Eval frequency — run EvalCallback every N games:",
+                default="50",
+                validate=_pos_int,
+                style=_STYLE,
+            ).ask()
+            if eval_freq_str is None:
+                raise SystemExit(0)
+
+            n_eval_games_str = questionary.text(
+                "Eval games per round:",
+                default="20",
+                validate=_pos_int,
+                style=_STYLE,
+            ).ask()
+            if n_eval_games_str is None:
+                raise SystemExit(0)
+
+            tensorboard_dir = questionary.text(
+                "TensorBoard / CSV log directory (leave blank to disable):",
+                default="",
+                style=_STYLE,
+            ).ask()
+            if tensorboard_dir is None:
+                raise SystemExit(0)
+
     # ── Misc options ──────────────────────────────────────────────────────────
     show = questionary.confirm(
         "Show browser window while playing?",
@@ -265,6 +311,14 @@ def run_tui() -> list[str]:
         "Checkpoint dir",
         checkpoint_dir.strip() + "/" if checkpoint_dir.strip() else "–",
     )
+    if _is_rl and int(train_games_str) > 0:
+        table.add_row("Train games", train_games_str)
+        table.add_row("Eval freq", eval_freq_str)
+        table.add_row("Eval games", n_eval_games_str)
+        table.add_row(
+            "TensorBoard dir",
+            tensorboard_dir.strip() + "/" if tensorboard_dir.strip() else "–",
+        )
     table.add_row("Show browser", "yes" if show else "no")
     table.add_row("Keep N runs", keep_str)
     table.add_row("HTML report", "yes" if report else "no")
@@ -295,6 +349,13 @@ def run_tui() -> list[str]:
 
     if checkpoint_dir.strip():
         argv += ["--checkpoint-dir", checkpoint_dir.strip()]
+
+    if _is_rl and int(train_games_str) > 0:
+        argv += ["--train-games", train_games_str]
+        argv += ["--eval-freq", eval_freq_str]
+        argv += ["--n-eval-games", n_eval_games_str]
+        if tensorboard_dir.strip():
+            argv += ["--tensorboard-dir", tensorboard_dir.strip()]
 
     if mode_choice != "custom":
         argv += ["--mode", mode_choice]

@@ -332,3 +332,83 @@ class TestWebUIServer:
         assert "#bbada0" in _HTML_SUCCESS
         assert "#1e1e2e" not in _HTML_SUCCESS
 
+    def test_html_form_has_rl_training_section(self):
+        """The form must contain the RL Training section with new fields."""
+        from src.webui import _HTML_FORM
+
+        assert "train_games" in _HTML_FORM
+        assert "eval_freq" in _HTML_FORM
+        assert "n_eval_games" in _HTML_FORM
+        assert "tensorboard_dir" in _HTML_FORM
+
+    def test_html_form_rl_section_hidden_by_default(self):
+        """RL section should start hidden (only shown for DQN/PPO via JS)."""
+        from src.webui import _HTML_FORM
+
+        assert "rl-section" in _HTML_FORM
+        assert 'id="rl-section"' in _HTML_FORM
+
+
+# ---------------------------------------------------------------------------
+# Tests: _form_to_argv — RL training flags
+# ---------------------------------------------------------------------------
+
+class TestFormToArgvRLTraining:
+    """New RL training flags: --train-games, --eval-freq, --n-eval-games,
+    --tensorboard-dir."""
+
+    def test_train_games_absent_when_zero(self):
+        result = _form_to_argv(_form(train_games="0"))
+        assert "--train-games" not in result
+
+    def test_train_games_absent_when_missing(self):
+        result = _form_to_argv(_form())
+        assert "--train-games" not in result
+
+    def test_train_games_present_when_positive(self):
+        result = _form_to_argv(_form(train_games="5000"))
+        assert "--train-games" in result
+        assert result[result.index("--train-games") + 1] == "5000"
+
+    def test_eval_freq_included_with_train_games(self):
+        result = _form_to_argv(_form(train_games="100", eval_freq="25"))
+        assert "--eval-freq" in result
+        assert result[result.index("--eval-freq") + 1] == "25"
+
+    def test_n_eval_games_included_with_train_games(self):
+        result = _form_to_argv(_form(train_games="100", n_eval_games="10"))
+        assert "--n-eval-games" in result
+        assert result[result.index("--n-eval-games") + 1] == "10"
+
+    def test_tensorboard_dir_included_when_set(self):
+        result = _form_to_argv(_form(train_games="100", tensorboard_dir="tb_logs"))
+        assert "--tensorboard-dir" in result
+        assert result[result.index("--tensorboard-dir") + 1] == "tb_logs"
+
+    def test_tensorboard_dir_absent_when_empty(self):
+        result = _form_to_argv(_form(train_games="100", tensorboard_dir=""))
+        assert "--tensorboard-dir" not in result
+
+    def test_rl_flags_absent_when_train_games_zero(self):
+        result = _form_to_argv(_form(train_games="0", tensorboard_dir="tb"))
+        assert "--train-games" not in result
+        assert "--eval-freq" not in result
+        assert "--n-eval-games" not in result
+        assert "--tensorboard-dir" not in result
+
+    def test_rl_argv_parseable_by_main(self):
+        from main import parse_args
+
+        form = _form(
+            algorithm="dqn",
+            train_games="200",
+            eval_freq="50",
+            n_eval_games="10",
+            tensorboard_dir="tb_logs",
+        )
+        args = parse_args(_form_to_argv(form))
+        assert args.train_games == 200
+        assert args.eval_freq == 50
+        assert args.n_eval_games == 10
+        assert args.tensorboard_dir == "tb_logs"
+

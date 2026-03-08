@@ -61,6 +61,7 @@
       box-shadow: 0 0 0 2px rgba(245,149,99,.18);
     }
     .three-col { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+    .two-col   { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
     .check-row {
       display: flex;
       align-items: center;
@@ -111,6 +112,19 @@
       opacity: .6;
       margin-bottom: 12px;
     }
+    .rl-section {
+      border-top: 1px solid #eee4da;
+      margin-top: 18px;
+      padding-top: 14px;
+    }
+    .rl-section-title {
+      font-size: 0.68rem;
+      text-transform: uppercase;
+      letter-spacing: .1em;
+      color: #8b5cf6;
+      opacity: .85;
+      margin-bottom: 12px;
+    }
     .btn-row { display: flex; justify-content: flex-end; gap: 12px; margin-top: 24px; }
     .btn {
       padding: 10px 22px;
@@ -148,7 +162,7 @@
     <!-- Algorithm -->
     <div class="field">
       <label for="algorithm">Algorithm</label>
-      <select id="algorithm" name="algorithm">
+      <select id="algorithm" name="algorithm" onchange="toggleRLSection(this.value)">
         <option value="random">random</option>
         <option value="greedy">greedy</option>
         <option value="heuristic">heuristic</option>
@@ -201,7 +215,7 @@
       <div class="three-col">
         <div class="field">
           <label for="games">Games / run</label>
-          <input type="number" id="games" name="games" value="20" min="1">
+          <input type="number" id="games" name="games" value="20" min="0">
         </div>
         <div class="field">
           <label for="runs">Runs</label>
@@ -231,6 +245,30 @@
         <label for="checkpoint_dir">Checkpoint directory <span class="field-hint">(optional — DQN / PPO only; leave blank to disable)</span></label>
         <input type="text" id="checkpoint_dir" name="checkpoint_dir"
                placeholder="e.g. checkpoints">
+      </div>
+    </div>
+
+    <!-- RL Training (DQN / PPO only) -->
+    <div class="rl-section" id="rl-section" style="display:none">
+      <div class="rl-section-title">&#9889; RL Training (DQN / PPO only)</div>
+      <div class="field">
+        <label for="train_games">Fast training games <span class="field-hint">(in-process, no browser — 0 to skip)</span></label>
+        <input type="number" id="train_games" name="train_games" value="0" min="0">
+      </div>
+      <div class="two-col">
+        <div class="field">
+          <label for="eval_freq">Eval frequency <span class="field-hint">(every N games)</span></label>
+          <input type="number" id="eval_freq" name="eval_freq" value="50" min="1">
+        </div>
+        <div class="field">
+          <label for="n_eval_games">Eval games / round</label>
+          <input type="number" id="n_eval_games" name="n_eval_games" value="20" min="1">
+        </div>
+      </div>
+      <div class="field">
+        <label for="tensorboard_dir">TensorBoard / CSV log directory <span class="field-hint">(optional — leave blank to disable)</span></label>
+        <input type="text" id="tensorboard_dir" name="tensorboard_dir"
+               placeholder="e.g. tb_logs">
       </div>
     </div>
 
@@ -266,7 +304,7 @@
     </div>
 
     <div class="btn-row">
-      <button type="reset" class="btn btn-secondary">Reset</button>
+      <button type="reset" class="btn btn-secondary" onclick="resetForm()">Reset</button>
       <button type="submit" class="btn btn-primary">Launch &#9654;</button>
     </div>
 
@@ -284,6 +322,24 @@
     document.getElementById('mode-input').value = mode;
     document.getElementById('custom-fields').style.display =
       mode === 'custom' ? '' : 'none';
+  }
+
+  function toggleRLSection(algo) {
+    var isRL = algo.startsWith('dqn') || algo.startsWith('ppo');
+    document.getElementById('rl-section').style.display = isRL ? '' : 'none';
+  }
+
+  function resetForm() {
+    // Re-apply JS state after native reset clears it
+    setTimeout(function() {
+      var algo = document.getElementById('algorithm').value;
+      toggleRLSection(algo);
+      document.getElementById('custom-fields').style.display = '';
+      document.querySelectorAll('.mode-btn').forEach(function(b) {
+        b.classList.toggle('active', b.getAttribute('data-mode') === 'custom');
+      });
+      document.getElementById('mode-input').value = 'custom';
+    }, 0);
   }
 </script>
 </body>
