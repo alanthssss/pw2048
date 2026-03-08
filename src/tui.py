@@ -166,6 +166,15 @@ def run_tui() -> list[str]:
     if output is None:
         raise SystemExit(0)
 
+    # ── Checkpoint directory (learning algorithms only) ───────────────────────
+    checkpoint_dir = questionary.text(
+        "Checkpoint directory (leave blank to disable — DQN/PPO only):",
+        default="",
+        style=_STYLE,
+    ).ask()
+    if checkpoint_dir is None:
+        raise SystemExit(0)
+
     # ── Misc options ──────────────────────────────────────────────────────────
     show = questionary.confirm(
         "Show browser window while playing?",
@@ -252,6 +261,10 @@ def run_tui() -> list[str]:
             f"{mode_choice}  ({p['games']} games × {p['runs']} run(s), auto parallel)",
         )
     table.add_row("Output dir", output + "/")
+    table.add_row(
+        "Checkpoint dir",
+        checkpoint_dir.strip() + "/" if checkpoint_dir.strip() else "–",
+    )
     table.add_row("Show browser", "yes" if show else "no")
     table.add_row("Keep N runs", keep_str)
     table.add_row("HTML report", "yes" if report else "no")
@@ -279,6 +292,9 @@ def run_tui() -> list[str]:
 
     if version_tag.strip():
         argv += ["--algo-version", version_tag.strip()]
+
+    if checkpoint_dir.strip():
+        argv += ["--checkpoint-dir", checkpoint_dir.strip()]
 
     if mode_choice != "custom":
         argv += ["--mode", mode_choice]

@@ -81,6 +81,17 @@ Examples
 
     # Same with PPO-v3
     python main.py --algorithm ppo --mode benchmark --report
+
+    # --- Persist model weights across multiple runs ---
+    # First session: 500 games, weights saved to checkpoints/DQN-v3/checkpoint.npz
+    python main.py --algorithm dqn --games 500 --checkpoint-dir checkpoints
+
+    # Second session: loads the saved weights, continues RL training from where
+    # the first run left off — no BC pre-training overhead, ε stays low.
+    python main.py --algorithm dqn --games 500 --checkpoint-dir checkpoints
+
+    # Combine with benchmark mode to run several sessions over multiple days:
+    python main.py --algorithm dqn --mode benchmark --checkpoint-dir checkpoints --report
 """
 
 from __future__ import annotations
@@ -491,6 +502,21 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
              "'version' attribute.",
     )
 
+    parser.add_argument(
+        "--checkpoint-dir",
+        default=None,
+        metavar="DIR",
+        help=(
+            "Directory for model weight checkpoints used by the learning "
+            "algorithms (dqn, ppo).  When given, the latest checkpoint is "
+            "loaded at startup (skipping behavioural-cloning pre-training) "
+            "and updated after every run so training accumulates across "
+            "multiple invocations of python main.py.  "
+            "Checkpoint files are stored as "
+            "<checkpoint-dir>/<AlgorithmName>/checkpoint.npz."
+        ),
+    )
+
     argcomplete.autocomplete(parser)
     args = parser.parse_args(argv)
 
@@ -541,7 +567,25 @@ def main(argv: list[str] | None = None) -> None:
         args = parse_args(web_argv)
 
     algo_cls = ALGORITHMS[args.algorithm]
-    algorithm = algo_cls()
+
+    # ------------------------------------------------------------------
+    # Resolve checkpoint path for learning algorithms (DQN-v3, PPO-v3).
+    # ------------------------------------------------------------------
+    ckpt_path: Path | None = None
+    if args.checkpoint_dir and getattr(algo_cls, "supports_checkpoint", False):
+        ckpt_dir = Path(args.checkpoint_dir) / algo_cls.name
+        ckpt_dir.mkdir(parents=True, exist_ok=True)
+        ckpt_path = ckpt_dir / "checkpoint.npz"
+        if ckpt_path.exists():
+            print(f"  Checkpoint found → loading from {ckpt_path}")
+        else:
+            print(f"  No checkpoint found at {ckpt_path} — starting from scratch")
+
+    # Instantiate the algorithm, passing the checkpoint path if applicable.
+    if ckpt_path is not None:
+        algorithm = algo_cls(checkpoint_path=ckpt_path)
+    else:
+        algorithm = algo_cls()
 
     # Migrate any pre-versioning result directories (e.g. MCTS/ → MCTS-v1/) so
     # the HTML report always shows clean, versioned algorithm names.
@@ -603,6 +647,13 @@ def main(argv: list[str] | None = None) -> None:
             mode=args.mode,
         )
         print(f"Metadata saved → {meta_path}")
+
+        # ------------------------------------------------------------------
+        # Save model checkpoint after each run (learning algorithms only)
+        # ------------------------------------------------------------------
+        if ckpt_path is not None and hasattr(algorithm, "save_checkpoint"):
+            algorithm.save_checkpoint(ckpt_path)
+            print(f"Checkpoint saved → {ckpt_path}")
 
         # ------------------------------------------------------------------
         # Prune old local results after each run to keep disk usage bounded

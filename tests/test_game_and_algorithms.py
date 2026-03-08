@@ -1406,3 +1406,193 @@ class TestPPOBehaviouralCloning:
         algo = PPOAlgorithmV3(n_pretrain_games=5, seed=0)
         board = [[2, 4, 0, 0], [0] * 4, [0] * 4, [0] * 4]
         assert algo.choose_move(board) in DIRECTIONS
+
+
+# ===========================================================================
+# Checkpoint save / load — DQNAlgorithmV3 and PPOAlgorithmV3
+# ===========================================================================
+
+class TestDQNAlgorithmV3Checkpoint:
+    """Tests for save_checkpoint / load_checkpoint on DQNAlgorithmV3."""
+
+    def test_save_creates_npz_file(self, tmp_path):
+        algo = DQNAlgorithmV3(n_pretrain_games=0, seed=0)
+        ckpt = tmp_path / "dqn.npz"
+        algo.save_checkpoint(ckpt)
+        assert ckpt.exists()
+
+    def test_npz_contains_expected_keys(self, tmp_path):
+        algo = DQNAlgorithmV3(n_pretrain_games=0, seed=0)
+        ckpt = tmp_path / "dqn.npz"
+        algo.save_checkpoint(ckpt)
+        d = np.load(ckpt)
+        for key in ("q_W1", "q_b1", "q_W2", "q_b2", "q_W3", "q_b3",
+                    "t_W1", "t_b1", "t_W2", "t_b2", "t_W3", "t_b3",
+                    "epsilon", "step", "adam_t"):
+            assert key in d.files, f"Missing key: {key}"
+
+    def test_load_restores_weights(self, tmp_path):
+        algo = DQNAlgorithmV3(n_pretrain_games=0, seed=0)
+        # Perform one training step so weights change from initialisation.
+        board = [[2, 4, 8, 16], [32, 64, 128, 256], [2, 4, 8, 16], [32, 64, 0, 0]]
+        for _ in range(20):
+            algo.choose_move(board)
+        ckpt = tmp_path / "dqn.npz"
+        algo.save_checkpoint(ckpt)
+        W1_before = algo._q_net.W1.copy()
+
+        # Create a fresh agent and load.
+        algo2 = DQNAlgorithmV3(n_pretrain_games=0, seed=99)
+        assert not np.array_equal(algo2._q_net.W1, W1_before), \
+            "Fresh agent should have different weights"
+        algo2.load_checkpoint(ckpt)
+        np.testing.assert_array_equal(algo2._q_net.W1, W1_before)
+
+    def test_load_restores_epsilon_and_step(self, tmp_path):
+        algo = DQNAlgorithmV3(n_pretrain_games=0, epsilon_start=0.5, seed=0)
+        board = [[2, 0, 0, 0], [0] * 4, [0] * 4, [0] * 4]
+        for _ in range(30):
+            algo.choose_move(board)
+        eps_before = algo._epsilon
+        step_before = algo._step
+        ckpt = tmp_path / "dqn.npz"
+        algo.save_checkpoint(ckpt)
+
+        algo2 = DQNAlgorithmV3(n_pretrain_games=0, seed=99)
+        algo2.load_checkpoint(ckpt)
+        assert abs(algo2._epsilon - eps_before) < 1e-6
+        assert algo2._step == step_before
+
+    def test_load_restores_adam_moments(self, tmp_path):
+        algo = DQNAlgorithmV3(
+            n_pretrain_games=0, batch_size=4, buffer_size=20,
+            train_freq=1, seed=0
+        )
+        board = [[2, 4, 8, 16], [32, 64, 128, 256], [2, 4, 8, 16], [32, 64, 0, 0]]
+        for _ in range(30):
+            algo.choose_move(board)
+        ckpt = tmp_path / "dqn.npz"
+        algo.save_checkpoint(ckpt)
+
+        algo2 = DQNAlgorithmV3(n_pretrain_games=0, seed=99)
+        algo2.load_checkpoint(ckpt)
+        assert algo2._optimizer._t == algo._optimizer._t
+        if algo._optimizer._m:
+            for k in algo._optimizer._m:
+                np.testing.assert_array_almost_equal(
+                    algo2._optimizer._m[k], algo._optimizer._m[k]
+                )
+
+    def test_checkpoint_path_in_constructor_loads_weights(self, tmp_path):
+        # Save a checkpoint from a trained agent.
+        algo = DQNAlgorithmV3(n_pretrain_games=0, seed=0)
+        board = [[2, 4, 8, 16], [32, 64, 128, 256], [2, 4, 8, 16], [32, 64, 0, 0]]
+        for _ in range(20):
+            algo.choose_move(board)
+        ckpt = tmp_path / "checkpoint.npz"
+        algo.save_checkpoint(ckpt)
+        W1_ref = algo._q_net.W1.copy()
+
+        # Construct a new agent with checkpoint_path — BC should be skipped
+        # and weights loaded from the file instead.
+        algo2 = DQNAlgorithmV3(n_pretrain_games=50, seed=99, checkpoint_path=ckpt)
+        np.testing.assert_array_equal(algo2._q_net.W1, W1_ref)
+
+    def test_constructor_skips_checkpoint_when_file_missing(self, tmp_path):
+        missing = tmp_path / "nonexistent.npz"
+        # Should not raise; BC pre-training fires normally.
+        algo = DQNAlgorithmV3(n_pretrain_games=0, seed=0, checkpoint_path=missing)
+        board = [[2, 0, 0, 0], [0] * 4, [0] * 4, [0] * 4]
+        assert algo.choose_move(board) in DIRECTIONS
+
+    def test_supports_checkpoint_class_attribute(self):
+        assert getattr(DQNAlgorithmV3, "supports_checkpoint", False) is True
+
+
+class TestPPOAlgorithmV3Checkpoint:
+    """Tests for save_checkpoint / load_checkpoint on PPOAlgorithmV3."""
+
+    def test_save_creates_npz_file(self, tmp_path):
+        algo = PPOAlgorithmV3(n_pretrain_games=0, seed=0)
+        ckpt = tmp_path / "ppo.npz"
+        algo.save_checkpoint(ckpt)
+        assert ckpt.exists()
+
+    def test_npz_contains_expected_keys(self, tmp_path):
+        algo = PPOAlgorithmV3(n_pretrain_games=0, seed=0)
+        ckpt = tmp_path / "ppo.npz"
+        algo.save_checkpoint(ckpt)
+        d = np.load(ckpt)
+        for key in ("W1", "b1", "W2", "b2", "W_a", "b_a", "W_v", "b_v", "adam_t"):
+            assert key in d.files, f"Missing key: {key}"
+
+    def test_load_restores_weights(self, tmp_path):
+        algo = PPOAlgorithmV3(n_pretrain_games=0, seed=0)
+        board = [[2, 4, 8, 16], [32, 64, 128, 256], [2, 4, 8, 16], [32, 64, 0, 0]]
+        for _ in range(20):
+            algo.choose_move(board)
+        ckpt = tmp_path / "ppo.npz"
+        algo.save_checkpoint(ckpt)
+        W1_before = algo._net.W1.copy()
+
+        algo2 = PPOAlgorithmV3(n_pretrain_games=0, seed=99)
+        assert not np.array_equal(algo2._net.W1, W1_before)
+        algo2.load_checkpoint(ckpt)
+        np.testing.assert_array_equal(algo2._net.W1, W1_before)
+
+    def test_load_restores_actor_and_critic_heads(self, tmp_path):
+        algo = PPOAlgorithmV3(
+            n_pretrain_games=0, update_freq=4, n_epochs=1, seed=0
+        )
+        board = [[2, 4, 8, 16], [32, 64, 128, 256], [2, 4, 8, 16], [32, 64, 0, 0]]
+        for _ in range(50):
+            algo.choose_move(board)
+        ckpt = tmp_path / "ppo.npz"
+        algo.save_checkpoint(ckpt)
+        W_a_before = algo._net.W_a.copy()
+        W_v_before = algo._net.W_v.copy()
+
+        algo2 = PPOAlgorithmV3(n_pretrain_games=0, seed=99)
+        algo2.load_checkpoint(ckpt)
+        np.testing.assert_array_equal(algo2._net.W_a, W_a_before)
+        np.testing.assert_array_equal(algo2._net.W_v, W_v_before)
+
+    def test_load_restores_adam_moments(self, tmp_path):
+        algo = PPOAlgorithmV3(
+            n_pretrain_games=0, update_freq=4, n_epochs=1, seed=0
+        )
+        board = [[2, 4, 8, 16], [32, 64, 128, 256], [2, 4, 8, 16], [32, 64, 0, 0]]
+        for _ in range(50):
+            algo.choose_move(board)
+        ckpt = tmp_path / "ppo.npz"
+        algo.save_checkpoint(ckpt)
+
+        algo2 = PPOAlgorithmV3(n_pretrain_games=0, seed=99)
+        algo2.load_checkpoint(ckpt)
+        assert algo2._optimizer._t == algo._optimizer._t
+        if algo._optimizer._m:
+            for k in algo._optimizer._m:
+                np.testing.assert_array_almost_equal(
+                    algo2._optimizer._m[k], algo._optimizer._m[k]
+                )
+
+    def test_checkpoint_path_in_constructor_loads_weights(self, tmp_path):
+        algo = PPOAlgorithmV3(n_pretrain_games=0, seed=0)
+        board = [[2, 4, 8, 16], [32, 64, 128, 256], [2, 4, 8, 16], [32, 64, 0, 0]]
+        for _ in range(20):
+            algo.choose_move(board)
+        ckpt = tmp_path / "checkpoint.npz"
+        algo.save_checkpoint(ckpt)
+        W1_ref = algo._net.W1.copy()
+
+        algo2 = PPOAlgorithmV3(n_pretrain_games=50, seed=99, checkpoint_path=ckpt)
+        np.testing.assert_array_equal(algo2._net.W1, W1_ref)
+
+    def test_constructor_skips_checkpoint_when_file_missing(self, tmp_path):
+        missing = tmp_path / "nonexistent.npz"
+        algo = PPOAlgorithmV3(n_pretrain_games=0, seed=0, checkpoint_path=missing)
+        board = [[2, 0, 0, 0], [0] * 4, [0] * 4, [0] * 4]
+        assert algo.choose_move(board) in DIRECTIONS
+
+    def test_supports_checkpoint_class_attribute(self):
+        assert getattr(PPOAlgorithmV3, "supports_checkpoint", False) is True

@@ -63,6 +63,7 @@ def _form_to_argv(form: dict[str, list[str]]) -> list[str]:
     output = _get("output", "results") or "results"
     keep = _get("keep", str(_DEFAULT_KEEP))
     algo_version = _get("algo_version", "").strip()
+    checkpoint_dir = _get("checkpoint_dir", "").strip()
 
     argv: list[str] = [
         "--algorithm", algorithm,
@@ -72,6 +73,9 @@ def _form_to_argv(form: dict[str, list[str]]) -> list[str]:
 
     if algo_version:
         argv += ["--algo-version", algo_version]
+
+    if checkpoint_dir:
+        argv += ["--checkpoint-dir", checkpoint_dir]
 
     if mode_choice != "custom":
         argv += ["--mode", mode_choice]

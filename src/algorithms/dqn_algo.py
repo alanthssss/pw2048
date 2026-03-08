@@ -5,7 +5,8 @@ from __future__ import annotations
 import math
 import random
 from collections import deque
-from typing import List, Optional
+from pathlib import Path
+from typing import List, Optional, Union
 
 import numpy as np
 
@@ -710,6 +711,8 @@ class DQNAlgorithmV3(BaseAlgorithm):
 
     name = "DQN-v3"
     version = "v3"
+    #: Indicates this algorithm supports save/load checkpoint.
+    supports_checkpoint: bool = True
 
     def __init__(
         self,
@@ -725,6 +728,7 @@ class DQNAlgorithmV3(BaseAlgorithm):
         train_freq: int = 4,
         n_pretrain_games: int = 50,
         seed: Optional[int] = None,
+        checkpoint_path: Optional[Union[str, Path]] = None,
     ) -> None:
         self._rng = random.Random(seed)
         np_seed = seed if seed is not None else 42
@@ -750,7 +754,11 @@ class DQNAlgorithmV3(BaseAlgorithm):
         self._prev_action: Optional[int] = None
         self._prev_board: Optional[List[List[int]]] = None
 
-        if n_pretrain_games > 0:
+        ckpt = Path(checkpoint_path) if checkpoint_path is not None else None
+        if ckpt is not None and ckpt.exists():
+            # Load saved weights — skip BC pre-training entirely.
+            self.load_checkpoint(ckpt)
+        elif n_pretrain_games > 0:
             self._pretrain_bc(n_pretrain_games)
 
     # ------------------------------------------------------------------
@@ -869,6 +877,102 @@ class DQNAlgorithmV3(BaseAlgorithm):
             ("W3", self._q_net.W3, dW3),
             ("b3", self._q_net.b3, db3),
         ])
+
+    # ------------------------------------------------------------------
+    # Checkpoint persistence
+    # ------------------------------------------------------------------
+
+    def save_checkpoint(self, path: Union[str, Path]) -> None:
+        """Persist all trainable state to a ``.npz`` file.
+
+        Saved state
+        -----------
+        * Q-network and target-network weights
+        * Adam optimizer state (step counter, first and second moment vectors)
+        * Current ε (exploration rate) and global step counter
+
+        The replay buffer is intentionally **not** saved — it is large (up to
+        50 000 transitions) and old transitions become less relevant over time.
+        The agent will refill the buffer quickly at the start of the next run.
+
+        Parameters
+        ----------
+        path:
+            Destination file.  A ``.npz`` extension is recommended; NumPy
+            adds it automatically if omitted.
+        """
+        data: dict[str, np.ndarray] = {
+            # Online Q-network
+            "q_W1": self._q_net.W1,
+            "q_b1": self._q_net.b1,
+            "q_W2": self._q_net.W2,
+            "q_b2": self._q_net.b2,
+            "q_W3": self._q_net.W3,
+            "q_b3": self._q_net.b3,
+            # Target network
+            "t_W1": self._target_net.W1,
+            "t_b1": self._target_net.b1,
+            "t_W2": self._target_net.W2,
+            "t_b2": self._target_net.b2,
+            "t_W3": self._target_net.W3,
+            "t_b3": self._target_net.b3,
+            # Scalar training state
+            "epsilon": np.array([self._epsilon], dtype=np.float32),
+            "step":    np.array([self._step],    dtype=np.int64),
+            # Adam step counter
+            "adam_t":  np.array([self._optimizer._t], dtype=np.int64),
+        }
+        # Adam moment vectors (variable set of keys depending on what was trained).
+        for k, v in self._optimizer._m.items():
+            data[f"adam_m_{k}"] = v
+        for k, v in self._optimizer._v.items():
+            data[f"adam_v_{k}"] = v
+        np.savez(path, **data)
+
+    def load_checkpoint(self, path: Union[str, Path]) -> None:
+        """Restore trainable state saved by :meth:`save_checkpoint`.
+
+        This method may be called either from :meth:`__init__` (when a
+        ``checkpoint_path`` is supplied) or externally.  After loading, ε is
+        taken from the checkpoint so exploration continues from where the last
+        run left off.
+
+        Parameters
+        ----------
+        path:
+            Source ``.npz`` file written by :meth:`save_checkpoint`.
+
+        Raises
+        ------
+        FileNotFoundError
+            If *path* does not exist.
+        """
+        d = np.load(path)
+        # Online Q-network
+        self._q_net.W1 = d["q_W1"].copy()
+        self._q_net.b1 = d["q_b1"].copy()
+        self._q_net.W2 = d["q_W2"].copy()
+        self._q_net.b2 = d["q_b2"].copy()
+        self._q_net.W3 = d["q_W3"].copy()
+        self._q_net.b3 = d["q_b3"].copy()
+        # Target network
+        self._target_net.W1 = d["t_W1"].copy()
+        self._target_net.b1 = d["t_b1"].copy()
+        self._target_net.W2 = d["t_W2"].copy()
+        self._target_net.b2 = d["t_b2"].copy()
+        self._target_net.W3 = d["t_W3"].copy()
+        self._target_net.b3 = d["t_b3"].copy()
+        # Scalar state
+        self._epsilon = float(d["epsilon"][0])
+        self._step    = int(d["step"][0])
+        # Adam optimizer
+        self._optimizer._t = int(d["adam_t"][0])
+        self._optimizer._m = {
+            k[7:]: d[k].copy() for k in d.files if k.startswith("adam_m_")
+        }
+        self._optimizer._v = {
+            k[7:]: d[k].copy() for k in d.files if k.startswith("adam_v_")
+        }
 
     # ------------------------------------------------------------------
     # Behavioural-cloning pre-training

@@ -129,6 +129,50 @@ Edit `main.py`'s `ALGORITHMS` dict to pass custom values:
 | `epsilon_decay` | 0.9998 | Slower exploration → exploitation trade-off |
 | `buffer_size` | 50 000 | More diverse replay data |
 
+### Step 5 — Persist weights across sessions with `--checkpoint-dir`
+
+> **This is the most important flag for achieving high scores.**  Without it
+> every `python main.py` invocation starts from scratch (only BC pre-training).
+> With it, RL training accumulates indefinitely across however many sessions
+> you run.
+
+```bash
+# Session 1 — 500 games.  Weights saved after the run.
+python main.py --algorithm dqn --games 500 --checkpoint-dir checkpoints
+
+# Session 2 — loads from checkpoints/DQN-v3/checkpoint.npz, continues RL.
+# No BC overhead, epsilon stays at the value it reached in session 1.
+python main.py --algorithm dqn --games 500 --checkpoint-dir checkpoints
+
+# Repeat until satisfied.  Combine with --mode benchmark:
+python main.py --algorithm dqn --mode benchmark --checkpoint-dir checkpoints --report
+python main.py --algorithm ppo --mode benchmark --checkpoint-dir checkpoints --report
+```
+
+**What is saved in the checkpoint?**
+
+| Component | DQN-v3 | PPO-v3 |
+|---|---|---|
+| Network weights | Q-net + target-net (W1,b1,W2,b2,W3,b3 × 2) | Actor-critic (W1,b1,W2,b2,W_a,b_a,W_v,b_v) |
+| Optimizer state | Adam step counter, m/v moments | Adam step counter, m/v moments |
+| Training progress | ε, global step | — |
+| Replay / rollout buffer | ✗ (intentionally omitted) | ✗ (on-policy, stale data invalid) |
+
+The checkpoint is a single `.npz` file (~2 MB for the default 256-unit network).
+It is overwritten after every run, so only the latest weights are kept.
+
+**Expected learning curve with persistence:**
+
+| Cumulative games | Expected avg score |
+|---:|---:|
+| 500 | ~1 500 – 3 000 |
+| 2 000 | ~3 000 – 6 000 |
+| 10 000 | ~6 000 – 12 000 |
+| 50 000+ | Approaching Heuristic level (~16 000) |
+
+Scores improve unevenly — RL often plateaus then jumps.  Patience (and more
+games) is the main ingredient.
+
 ### Why learning *can* beat Expectimax given enough experience
 
 Expectimax and Heuristic use hard-coded heuristics that top out at ~33 000
@@ -141,6 +185,7 @@ The current implementation uses a **shallow 2-layer MLP and 100–500 games** �
 that is enough to show that BC pre-training works, but not enough to
 surpass Expectimax.  For higher scores consider:
 
+- Using `--checkpoint-dir` to **persist weights across many sessions**
 - Running **longer** (`--mode release` or `--mode benchmark`)
 - Increasing `n_pretrain_games` to 500–1000
 - Switching to a deeper network (`hidden_size=512`)
@@ -283,6 +328,7 @@ The wizard covers all parameters available via CLI flags:
 | Run mode (preset) | `--mode` |
 | Games / runs / workers (custom) | `--games`, `--runs`, `--parallel` |
 | Output directory | `--output` |
+| Checkpoint directory | `--checkpoint-dir` |
 | Show browser | `--show` |
 | Keep N runs | `--keep` |
 | HTML report | `--report` |
@@ -379,7 +425,7 @@ $ python main.py --mode <TAB>
 benchmark    dev    release
 
 $ python main.py --<TAB>
---algorithm  --games  --gui  --keep  --mode  --output  --parallel
+--algorithm  --checkpoint-dir  --games  --gui  --keep  --mode  --output  --parallel
 --report     --runs   --show  --s3-bucket  --s3-prefix  --s3-public
 --tui        --web
 ```
@@ -403,6 +449,7 @@ $ python main.py --<TAB>
 | `--tui` | off | Launch the interactive TUI wizard to configure all parameters step-by-step |
 | `--gui` | off | Launch the desktop GUI wizard (tkinter) to configure and start a run |
 | `--web` | off | Open the web UI launcher in the system browser to configure and start a run |
+| `--checkpoint-dir DIR` | — | Directory for persisting learning-algorithm model weights across runs. The checkpoint is loaded at startup (skipping BC pre-training) and saved after every run. Only applies to `dqn` / `ppo` (v3). |
 
 ## Parallel execution
 

@@ -47,6 +47,7 @@ def _build_argv(
     s3_prefix: str,
     s3_public: bool,
     version: str = "",
+    checkpoint_dir: str = "",
 ) -> list[str]:
     """Convert GUI form values to an argv list for :func:`main.parse_args`.
 
@@ -77,6 +78,9 @@ def _build_argv(
         Whether to pass ``--s3-public``.
     version:
         Optional algorithm version tag override.  Empty string → omit flag.
+    checkpoint_dir:
+        Optional checkpoint directory for DQN/PPO persistence.  Empty string
+        → omit flag.
 
     Returns
     -------
@@ -90,6 +94,8 @@ def _build_argv(
     ]
     if version.strip():
         argv += ["--algo-version", version.strip()]
+    if checkpoint_dir.strip():
+        argv += ["--checkpoint-dir", checkpoint_dir.strip()]
     if mode_choice != "custom":
         argv += ["--mode", mode_choice]
     else:
@@ -257,6 +263,27 @@ def run_gui() -> list[str]:
     ).grid(row=row, column=2, sticky="w", **PAD)
     row += 1
 
+    _label("Checkpoint dir:")
+    checkpoint_var = tk.StringVar(value="")
+    ttk.Entry(outer, textvariable=checkpoint_var, width=24).grid(
+        row=row, column=1, sticky="w", **PAD
+    )
+    ttk.Button(
+        outer,
+        text="Browse…",
+        command=lambda: checkpoint_var.set(
+            filedialog.askdirectory(initialdir=checkpoint_var.get() or ".")
+            or checkpoint_var.get()
+        ),
+    ).grid(row=row, column=2, sticky="w", **PAD)
+    row += 1
+    ttk.Label(
+        outer,
+        text="(blank → disabled; DQN/PPO only)",
+        font=("", 8, "italic"),
+    ).grid(row=row, column=1, columnspan=2, sticky="w", **PAD)
+    row += 1
+
     _sep()
 
     # ── Misc options ──────────────────────────────────────────────────────
@@ -352,6 +379,7 @@ def run_gui() -> list[str]:
             s3_prefix=s3_prefix_var.get(),
             s3_public=bool(s3_public_var.get()),
             version=version_var.get(),
+            checkpoint_dir=checkpoint_var.get(),
         )
         result.append(argv)
         root.destroy()

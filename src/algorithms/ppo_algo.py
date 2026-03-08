@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import math
 import random
-from typing import List, Optional
+from pathlib import Path
+from typing import List, Optional, Union
 
 import numpy as np
 
@@ -811,6 +812,8 @@ class PPOAlgorithmV3(BaseAlgorithm):
 
     name = "PPO-v3"
     version = "v3"
+    #: Indicates this algorithm supports save/load checkpoint.
+    supports_checkpoint: bool = True
 
     def __init__(
         self,
@@ -825,6 +828,7 @@ class PPOAlgorithmV3(BaseAlgorithm):
         value_coef: float = 0.5,
         n_pretrain_games: int = 50,
         seed: Optional[int] = None,
+        checkpoint_path: Optional[Union[str, Path]] = None,
     ) -> None:
         self._rng = random.Random(seed)
         np_seed = seed if seed is not None else 42
@@ -854,7 +858,11 @@ class PPOAlgorithmV3(BaseAlgorithm):
         self._prev_value: Optional[float] = None
         self._prev_board: Optional[List[List[int]]] = None
 
-        if n_pretrain_games > 0:
+        ckpt = Path(checkpoint_path) if checkpoint_path is not None else None
+        if ckpt is not None and ckpt.exists():
+            # Load saved weights — skip BC pre-training entirely.
+            self.load_checkpoint(ckpt)
+        elif n_pretrain_games > 0:
             self._pretrain_bc(n_pretrain_games)
 
     # ------------------------------------------------------------------
@@ -1020,7 +1028,76 @@ class PPOAlgorithmV3(BaseAlgorithm):
                 ("b_v",  self._net.b_v,  db_v),
             ])
 
+    # ------------------------------------------------------------------
+    # Checkpoint persistence
+    # ------------------------------------------------------------------
 
+    def save_checkpoint(self, path: Union[str, Path]) -> None:
+        """Persist all trainable state to a ``.npz`` file.
+
+        Saved state
+        -----------
+        * Actor-critic network weights
+        * Adam optimizer state (step counter, first and second moment vectors)
+
+        The rollout buffer is intentionally **not** saved — PPO is on-policy
+        so stale rollout data from a previous run would be invalid.
+
+        Parameters
+        ----------
+        path:
+            Destination file.  A ``.npz`` extension is recommended.
+        """
+        data: dict[str, np.ndarray] = {
+            # Shared hidden layers
+            "W1":  self._net.W1,
+            "b1":  self._net.b1,
+            "W2":  self._net.W2,
+            "b2":  self._net.b2,
+            # Actor head
+            "W_a": self._net.W_a,
+            "b_a": self._net.b_a,
+            # Critic head
+            "W_v": self._net.W_v,
+            "b_v": self._net.b_v,
+            # Adam step counter
+            "adam_t": np.array([self._optimizer._t], dtype=np.int64),
+        }
+        for k, v in self._optimizer._m.items():
+            data[f"adam_m_{k}"] = v
+        for k, v in self._optimizer._v.items():
+            data[f"adam_v_{k}"] = v
+        np.savez(path, **data)
+
+    def load_checkpoint(self, path: Union[str, Path]) -> None:
+        """Restore trainable state saved by :meth:`save_checkpoint`.
+
+        Parameters
+        ----------
+        path:
+            Source ``.npz`` file written by :meth:`save_checkpoint`.
+
+        Raises
+        ------
+        FileNotFoundError
+            If *path* does not exist.
+        """
+        d = np.load(path)
+        self._net.W1  = d["W1"].copy()
+        self._net.b1  = d["b1"].copy()
+        self._net.W2  = d["W2"].copy()
+        self._net.b2  = d["b2"].copy()
+        self._net.W_a = d["W_a"].copy()
+        self._net.b_a = d["b_a"].copy()
+        self._net.W_v = d["W_v"].copy()
+        self._net.b_v = d["b_v"].copy()
+        self._optimizer._t = int(d["adam_t"][0])
+        self._optimizer._m = {
+            k[7:]: d[k].copy() for k in d.files if k.startswith("adam_m_")
+        }
+        self._optimizer._v = {
+            k[7:]: d[k].copy() for k in d.files if k.startswith("adam_v_")
+        }
 
     # ------------------------------------------------------------------
     # Behavioural-cloning pre-training
