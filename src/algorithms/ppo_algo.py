@@ -731,6 +731,36 @@ class _Adam:
 
 
 # ---------------------------------------------------------------------------
+# Shared simulation helpers (browser-free in-process game simulation)
+# ---------------------------------------------------------------------------
+
+def _spawn_tile_np(
+    board: List[List[int]], rng: np.random.Generator
+) -> List[List[int]]:
+    """Return a copy of *board* with one new tile spawned at a random empty cell.
+
+    Follows the 2048 spawn distribution: 90 % → 2, 10 % → 4.  If the board
+    has no empty cells the board is returned unchanged.
+    """
+    empty = [(r, c) for r in range(4) for c in range(4) if board[r][c] == 0]
+    if not empty:
+        return [row[:] for row in board]
+    new_board = [row[:] for row in board]
+    idx = int(rng.integers(len(empty)))
+    r, c = empty[idx]
+    new_board[r][c] = 2 if rng.random() < 0.9 else 4
+    return new_board
+
+
+def _init_board_np(rng: np.random.Generator) -> List[List[int]]:
+    """Create an empty 4×4 board with two initial tiles (standard 2048 start)."""
+    board: List[List[int]] = [[0] * 4 for _ in range(4)]
+    board = _spawn_tile_np(board, rng)
+    board = _spawn_tile_np(board, rng)
+    return board
+
+
+# ---------------------------------------------------------------------------
 # PPO algorithm – version 3 (PPO-Clip + Adam + one-hot state + score reward)
 # ---------------------------------------------------------------------------
 
@@ -748,6 +778,9 @@ class PPOAlgorithmV3(BaseAlgorithm):
       terminal states are correctly signalled.
     * **Game-boundary reset** via :meth:`on_game_start`: prevents corrupt
       cross-game transitions from polluting the rollout buffer.
+    * **Behavioural-cloning pre-training**: before any RL experience the
+      actor head is warmed up by imitating the Heuristic algorithm on
+      ``n_pretrain_games`` simulated games (browser-free, in-process).
 
     Parameters
     ----------
@@ -769,6 +802,9 @@ class PPOAlgorithmV3(BaseAlgorithm):
         Entropy bonus coefficient (higher → more exploration).
     value_coef:
         Value-loss coefficient.
+    n_pretrain_games:
+        Number of in-process heuristic games used for behavioural-cloning
+        pre-training at construction time.  Set to 0 to disable.
     seed:
         Optional RNG seed.
     """
@@ -787,6 +823,7 @@ class PPOAlgorithmV3(BaseAlgorithm):
         update_freq: int = 256,
         entropy_coef: float = 0.02,
         value_coef: float = 0.5,
+        n_pretrain_games: int = 50,
         seed: Optional[int] = None,
     ) -> None:
         self._rng = random.Random(seed)
@@ -816,6 +853,9 @@ class PPOAlgorithmV3(BaseAlgorithm):
         self._prev_log_prob: Optional[float] = None
         self._prev_value: Optional[float] = None
         self._prev_board: Optional[List[List[int]]] = None
+
+        if n_pretrain_games > 0:
+            self._pretrain_bc(n_pretrain_games)
 
     # ------------------------------------------------------------------
     # BaseAlgorithm interface
@@ -980,3 +1020,91 @@ class PPOAlgorithmV3(BaseAlgorithm):
                 ("b_v",  self._net.b_v,  db_v),
             ])
 
+
+
+    # ------------------------------------------------------------------
+    # Behavioural-cloning pre-training
+    # ------------------------------------------------------------------
+
+    def _pretrain_bc(self, n_games: int) -> None:
+        """Warm-start the actor by imitating the Heuristic algorithm.
+
+        Runs ``n_games`` 2048 games in-process (no browser) using the
+        Heuristic policy to pick moves and tile-spawn simulation to advance
+        board state.  Collected ``(state, heuristic_action)`` pairs are used
+        for supervised cross-entropy training of the actor head, which gives
+        the agent a strong starting point before any RL experience.
+        """
+        from .heuristic_algo import _score_board  # lazy import
+
+        all_states: list[np.ndarray] = []
+        all_actions: list[int] = []
+
+        for _ in range(n_games):
+            board = _init_board_np(self._np_rng)
+            for _ in range(2_000):
+                best_dir: Optional[str] = None
+                best_score = float("-inf")
+                for d in DIRECTIONS:
+                    nb, _ = simulate_move(board, d)
+                    if not _boards_equal(board, nb):
+                        s = _score_board(nb)
+                        if s > best_score:
+                            best_score = s
+                            best_dir = d
+                if best_dir is None:
+                    break  # game over
+
+                all_states.append(_encode_board_onehot(board))
+                all_actions.append(_DIR_INDEX[best_dir])
+
+                board, _ = simulate_move(board, best_dir)
+                board = _spawn_tile_np(board, self._np_rng)
+
+        if not all_states:
+            return
+
+        states = np.array(all_states, dtype=np.float32)   # (N, 256)
+        actions = np.array(all_actions, dtype=np.int32)    # (N,)
+        n = len(states)
+        bc_batch = min(256, n)
+
+        # Three supervised passes over the collected data.
+        for _epoch in range(3):
+            perm = self._np_rng.permutation(n)
+            for start in range(0, n - bc_batch + 1, bc_batch):
+                S = states[perm[start:start + bc_batch]]       # (B, 256)
+                A = actions[perm[start:start + bc_batch]]      # (B,)
+                B = len(S)
+
+                logits, _, h2, z2, h1, z1 = self._net.forward(S)
+
+                # Softmax cross-entropy on actor logits: dL/dl = (softmax(l) − one_hot(a)) / B
+                l_shifted = logits - logits.max(axis=1, keepdims=True)
+                exp_l = np.exp(l_shifted)
+                probs = exp_l / (exp_l.sum(axis=1, keepdims=True) + 1e-8)
+                dL_d_logits = probs.copy()
+                dL_d_logits[np.arange(B), A] -= 1.0
+                dL_d_logits /= B
+
+                # Actor head gradients only; critic head gets zero gradient.
+                dW_a = h2.T @ dL_d_logits                      # (hidden, 4)
+                db_a = dL_d_logits.sum(axis=0)                 # (4,)
+                dL_dh2 = dL_d_logits @ self._net.W_a.T         # (B, hidden)
+
+                dz2 = dL_dh2 * _relu_grad(z2)                  # (B, hidden)
+                dW2 = h1.T @ dz2                               # (hidden, hidden)
+                db2 = dz2.sum(axis=0)                          # (hidden,)
+                dh1 = dz2 @ self._net.W2.T                     # (B, hidden)
+                dz1 = dh1 * _relu_grad(z1)                     # (B, hidden)
+                dW1 = S.T @ dz1                                # (256, hidden)
+                db1 = dz1.sum(axis=0)                          # (hidden,)
+
+                self._optimizer.step([
+                    ("W1",   self._net.W1,   dW1),
+                    ("b1",   self._net.b1,   db1),
+                    ("W2",   self._net.W2,   dW2),
+                    ("b2",   self._net.b2,   db2),
+                    ("W_a",  self._net.W_a,  dW_a),
+                    ("b_a",  self._net.b_a,  db_a),
+                ])

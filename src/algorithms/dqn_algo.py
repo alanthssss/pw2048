@@ -618,6 +618,36 @@ class _Adam:
 
 
 # ---------------------------------------------------------------------------
+# Shared simulation helpers (browser-free in-process game simulation)
+# ---------------------------------------------------------------------------
+
+def _spawn_tile_np(
+    board: List[List[int]], rng: np.random.Generator
+) -> List[List[int]]:
+    """Return a copy of *board* with one new tile spawned at a random empty cell.
+
+    Follows the 2048 spawn distribution: 90 % → 2, 10 % → 4.  If the board
+    has no empty cells the board is returned unchanged.
+    """
+    empty = [(r, c) for r in range(4) for c in range(4) if board[r][c] == 0]
+    if not empty:
+        return [row[:] for row in board]
+    new_board = [row[:] for row in board]
+    idx = int(rng.integers(len(empty)))
+    r, c = empty[idx]
+    new_board[r][c] = 2 if rng.random() < 0.9 else 4
+    return new_board
+
+
+def _init_board_np(rng: np.random.Generator) -> List[List[int]]:
+    """Create an empty 4×4 board with two initial tiles (standard 2048 start)."""
+    board: List[List[int]] = [[0] * 4 for _ in range(4)]
+    board = _spawn_tile_np(board, rng)
+    board = _spawn_tile_np(board, rng)
+    return board
+
+
+# ---------------------------------------------------------------------------
 # DQN algorithm – version 3 (Double DQN + Adam + one-hot state + score reward)
 # ---------------------------------------------------------------------------
 
@@ -638,6 +668,12 @@ class DQNAlgorithmV3(BaseAlgorithm):
       overhead.
     * **Game-boundary reset** via :meth:`on_game_start`: prevents corrupt
       cross-game transitions from polluting the replay buffer.
+    * **Behavioural-cloning pre-training**: before any RL experience the
+      Q-network is warmed up by imitating the Heuristic algorithm on
+      ``n_pretrain_games`` simulated games (browser-free, in-process).
+      After pre-training the agent already plays at heuristic level, so RL
+      fine-tuning can improve further rather than spending most of a run
+      re-discovering basic strategy.
     * Larger replay buffer (50 000) and mini-batch (128).
     * Slower ε-decay (0.9998) for adequate exploration.
 
@@ -663,6 +699,11 @@ class DQNAlgorithmV3(BaseAlgorithm):
         Steps between target-network weight copies.
     train_freq:
         Number of environment steps between training updates.
+    n_pretrain_games:
+        Number of in-process heuristic games used for behavioural-cloning
+        pre-training at construction time.  Set to 0 to disable.  The
+        default of 50 games (≈ 45 000 training samples) completes in about
+        4–5 seconds and gives the network a solid heuristic baseline.
     seed:
         Optional RNG seed for reproducibility.
     """
@@ -682,6 +723,7 @@ class DQNAlgorithmV3(BaseAlgorithm):
         batch_size: int = 128,
         target_update_freq: int = 500,
         train_freq: int = 4,
+        n_pretrain_games: int = 50,
         seed: Optional[int] = None,
     ) -> None:
         self._rng = random.Random(seed)
@@ -707,6 +749,9 @@ class DQNAlgorithmV3(BaseAlgorithm):
         self._prev_state: Optional[np.ndarray] = None
         self._prev_action: Optional[int] = None
         self._prev_board: Optional[List[List[int]]] = None
+
+        if n_pretrain_games > 0:
+            self._pretrain_bc(n_pretrain_games)
 
     # ------------------------------------------------------------------
     # BaseAlgorithm interface
@@ -824,4 +869,100 @@ class DQNAlgorithmV3(BaseAlgorithm):
             ("W3", self._q_net.W3, dW3),
             ("b3", self._q_net.b3, db3),
         ])
+
+    # ------------------------------------------------------------------
+    # Behavioural-cloning pre-training
+    # ------------------------------------------------------------------
+
+    def _pretrain_bc(self, n_games: int) -> None:
+        """Warm-start the Q-network by imitating the Heuristic algorithm.
+
+        Runs ``n_games`` 2048 games in-process (no browser) using the
+        Heuristic policy to pick moves and tile-spawn simulation to advance
+        board state.  Collected ``(state, heuristic_action)`` pairs are used
+        for supervised cross-entropy training of the Q-network, which gives
+        the agent a strong starting point before any RL experience.
+
+        After pre-training:
+
+        * ε is capped at ``0.3`` so the agent mostly exploits the learned
+          policy rather than exploring randomly from game 1.
+        * The target network is synchronised with the trained Q-network.
+        """
+        from .heuristic_algo import _score_board  # lazy import
+
+        all_states: list[np.ndarray] = []
+        all_actions: list[int] = []
+
+        for _ in range(n_games):
+            board = _init_board_np(self._np_rng)
+            for _ in range(2_000):
+                best_dir: Optional[str] = None
+                best_score = float("-inf")
+                for d in DIRECTIONS:
+                    nb, _ = simulate_move(board, d)
+                    if not _boards_equal(board, nb):
+                        s = _score_board(nb)
+                        if s > best_score:
+                            best_score = s
+                            best_dir = d
+                if best_dir is None:
+                    break  # game over
+
+                all_states.append(_encode_board_onehot(board))
+                all_actions.append(_DIR_INDEX[best_dir])
+
+                board, _ = simulate_move(board, best_dir)
+                board = _spawn_tile_np(board, self._np_rng)
+
+        if not all_states:
+            return
+
+        states = np.array(all_states, dtype=np.float32)   # (N, 256)
+        actions = np.array(all_actions, dtype=np.int32)    # (N,)
+        n = len(states)
+        bc_batch = min(256, n)
+
+        # Three supervised passes over the collected data.
+        for _epoch in range(3):
+            perm = self._np_rng.permutation(n)
+            for start in range(0, n - bc_batch + 1, bc_batch):
+                S = states[perm[start:start + bc_batch]]       # (B, 256)
+                A = actions[perm[start:start + bc_batch]]      # (B,)
+                B = len(S)
+
+                q, h2, z2, h1, z1 = self._q_net.forward(S)
+
+                # Softmax cross-entropy: dL/dq = (softmax(q) − one_hot(a)) / B
+                q_shifted = q - q.max(axis=1, keepdims=True)
+                exp_q = np.exp(q_shifted)
+                probs = exp_q / (exp_q.sum(axis=1, keepdims=True) + 1e-8)
+                dL_dq = probs.copy()
+                dL_dq[np.arange(B), A] -= 1.0
+                dL_dq /= B
+
+                dW3 = h2.T @ dL_dq
+                db3 = dL_dq.sum(axis=0)
+                dh2 = dL_dq @ self._q_net.W3.T
+                dz2 = dh2 * _relu_grad(z2)
+                dW2 = h1.T @ dz2
+                db2 = dz2.sum(axis=0)
+                dh1 = dz2 @ self._q_net.W2.T
+                dz1 = dh1 * _relu_grad(z1)
+                dW1 = S.T @ dz1
+                db1 = dz1.sum(axis=0)
+
+                self._optimizer.step([
+                    ("W1", self._q_net.W1, dW1),
+                    ("b1", self._q_net.b1, db1),
+                    ("W2", self._q_net.W2, dW2),
+                    ("b2", self._q_net.b2, db2),
+                    ("W3", self._q_net.W3, dW3),
+                    ("b3", self._q_net.b3, db3),
+                ])
+
+        # Start RL with a lower ε — the policy already knows the basics.
+        self._epsilon = min(self._epsilon, 0.3)
+        # Keep target net in sync with the pre-trained weights.
+        self._target_net.copy_weights(self._q_net)
 
