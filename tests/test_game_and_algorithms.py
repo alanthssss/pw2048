@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import math
 import pathlib
 import random
+import numpy as np
 import pytest
 from playwright.sync_api import sync_playwright
 
@@ -674,7 +676,6 @@ class TestEncodeBoard:
         assert abs(enc[0] - 1.0) < 1e-6
 
     def test_tile_2_encodes_correctly(self):
-        import math
         board = [[2, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]]
         enc = _encode_board(board)
         assert abs(enc[0] - math.log2(2) / 11.0) < 1e-6
@@ -699,7 +700,6 @@ class TestBoardHeuristic:
 
 class TestQNetwork:
     def test_forward_output_shape_single(self):
-        import numpy as np
         rng = np.random.default_rng(0)
         net = _QNetwork(16, 64, 4, rng)
         x = rng.random(16).astype("float32")
@@ -707,7 +707,6 @@ class TestQNetwork:
         assert q.shape == (4,)
 
     def test_forward_output_shape_batch(self):
-        import numpy as np
         rng = np.random.default_rng(0)
         net = _QNetwork(16, 64, 4, rng)
         x = rng.random((8, 16)).astype("float32")
@@ -715,7 +714,6 @@ class TestQNetwork:
         assert q.shape == (8, 4)
 
     def test_copy_weights_produces_identical_outputs(self):
-        import numpy as np
         rng = np.random.default_rng(1)
         net1 = _QNetwork(16, 64, 4, rng)
         net2 = _QNetwork(16, 64, 4, rng)
