@@ -6,6 +6,10 @@
 > fast in-process training, `--checkpoint-dir` to persist weights across
 > sessions, and **`--early-stopping-patience`** to stop automatically when
 > your model's performance plateaus.
+>
+> 📘 **New:** see [efficient-training.md](efficient-training.md) for the
+> complete guide on GPU acceleration, parallel workers, early stopping, and
+> model status monitoring.
 
 ---
 
@@ -332,3 +336,68 @@ Expectimax and Heuristic use hand-crafted heuristics that top out at ~33 000
 avg score.  A trained neural network can discover board patterns those heuristics
 miss.  The current shallow MLP needs many games to get there — use
 `--train-games` + `--checkpoint-dir` to accumulate tens of thousands in-process.
+
+---
+
+## Monitoring model status
+
+Two built-in commands let you inspect your training progress at any time
+**without restarting a training run**.
+
+### Inspect a checkpoint
+
+```bash
+# Show algorithm type, global step, ε, parameter count, and weight norms.
+python main.py --inspect-checkpoint checkpoints/DQN-v3/checkpoint.npz
+python main.py --inspect-checkpoint checkpoints/DQN-v3/best_checkpoint.npz
+```
+
+Sample output:
+
+```
+────────────────────────────────────────────────────────
+  Checkpoint: checkpoints/DQN-v3/best_checkpoint.npz
+────────────────────────────────────────────────────────
+  Algorithm   : DQN-v3
+  File size   : 2078.6 KB
+  Parameters  : 530,448
+  Global step : 24,631
+  ε (epsilon) : 7.12%  [late / converging]
+  Adam steps  : 4,892
+  Weight norms: mean=5.16  min=0.01  max=23.14
+────────────────────────────────────────────────────────
+```
+
+**ε interpretation:** >20% = early training; 5–20% = mid training; <5% = converging.
+
+### Training convergence status
+
+Requires `--tensorboard-dir` to have been set during training.
+
+```bash
+python main.py --training-status tb_logs/DQN-v3
+```
+
+Sample output:
+
+```
+────────────────────────────────────────────────────────
+  Training status: tb_logs/DQN-v3
+────────────────────────────────────────────────────────
+  Train games    : 5,000
+  Eval rounds    : 100
+  Best eval score: 8,432
+  Recent eval mean (10 rounds): 8,109
+  Current ε      : 3.21%
+  Score trend    : +42.3 pts/eval  [↑ improving]
+  Convergence    : 🟡 IMPROVING  (still learning — keep training)
+  Score sparkline: ▄▄▅▅▅▆▆▇▇█
+  Score P25/50/75: 6,124 / 7,432 / 8,109
+────────────────────────────────────────────────────────
+```
+
+**Sparkline** is the last N eval mean scores as a bar chart — flat = plateau.
+**🟢 STABLE** means training has converged; safe to stop.
+**🟡 IMPROVING** means the model is still learning; keep training.
+
+For GPU + parallel training tips see [efficient-training.md](efficient-training.md).

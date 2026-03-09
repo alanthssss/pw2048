@@ -660,6 +660,31 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "jump.  Only relevant when --early-stopping-patience > 0."
         ),
     )
+    parser.add_argument(
+        "--inspect-checkpoint",
+        metavar="PATH",
+        dest="inspect_checkpoint",
+        default=None,
+        help=(
+            "Print a human-readable status summary for a .npz checkpoint file "
+            "(shows algorithm, global step, epsilon, parameter count, and weight "
+            "norms) then exit.  "
+            "Example: --inspect-checkpoint checkpoints/DQN-v3/best_checkpoint.npz"
+        ),
+    )
+    parser.add_argument(
+        "--training-status",
+        metavar="DIR",
+        dest="training_status",
+        default=None,
+        help=(
+            "Print a convergence summary by reading training_log.csv from DIR "
+            "(the directory passed to --tensorboard-dir during training).  "
+            "Shows total games, best eval score, score trend, and a sparkline "
+            "of recent evaluation rounds, then exits.  "
+            "Example: --training-status tb_logs/DQN-v3"
+        ),
+    )
 
     argcomplete.autocomplete(parser)
     args = parser.parse_args(argv)
@@ -698,6 +723,19 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
+
+    # ------------------------------------------------------------------
+    # Early-exit inspection commands (no algorithm instantiation needed).
+    # ------------------------------------------------------------------
+    if args.inspect_checkpoint:
+        from src.training_status import inspect_checkpoint
+        inspect_checkpoint(args.inspect_checkpoint)
+        return
+
+    if args.training_status:
+        from src.training_status import print_training_status
+        print_training_status(args.training_status)
+        return
 
     # Launch the interactive TUI wizard when --tui is requested, then
     # re-parse the argv it returns.

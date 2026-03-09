@@ -31,6 +31,8 @@ Full reference for all `python main.py` flags, modes, and output structure.
 | `--train-workers N` | `1` | Parallel independent training workers (N workers each train for `--train-games` games, best one selected) |
 | `--early-stopping-patience N` | `0` | **Auto-stop training** when eval mean score has not improved for N consecutive eval rounds. `0` = disabled. Combine with a large `--train-games` or omit `--train-games` entirely for auto-mode. |
 | `--early-stopping-min-delta D` | `1.0` | Minimum absolute improvement in eval mean score needed to reset the patience counter. |
+| `--inspect-checkpoint PATH` | — | **Print model status** — algorithm, ε, global step, weight norms — from a `.npz` checkpoint file then exit. Example: `--inspect-checkpoint checkpoints/DQN-v3/best_checkpoint.npz` |
+| `--training-status DIR` | — | **Print convergence summary** — best score, trend, sparkline — from `training_log.csv` in DIR then exit. Requires `--tensorboard-dir` was set during training. Example: `--training-status tb_logs/DQN-v3` |
 | `--algo-version TAG` | — | Override the algorithm version tag written to `metrics.json` |
 
 ---

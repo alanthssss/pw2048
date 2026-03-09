@@ -65,6 +65,19 @@ python main.py --algorithm dqn \
                --eval-freq 50 \
                --checkpoint-dir checkpoints \
                --games 0
+
+# Maximum speed: GPU + 4 parallel workers + early stopping
+python main.py --algorithm dqn \
+               --train-workers 4 \
+               --early-stopping-patience 15 \
+               --eval-freq 100 \
+               --checkpoint-dir checkpoints \
+               --tensorboard-dir tb_logs \
+               --games 0
+
+# Inspect model status after training
+python main.py --inspect-checkpoint checkpoints/DQN-v3/best_checkpoint.npz
+python main.py --training-status    tb_logs/DQN-v3
 ```
 
 ## 4-layer RL Training Pipeline
@@ -95,7 +108,8 @@ python main.py --algorithm dqn \
                --checkpoint-dir checkpoints --games 0
 ```
 
-→ **[Full RL Training Guide](docs/rl-training.md)**
+→ **[Full RL Training Guide](docs/rl-training.md)**  
+→ **[Efficient Training Playbook — GPU / Parallel / Status](docs/efficient-training.md)**
 
 ## Roadmap
 
@@ -167,6 +181,7 @@ python -m pytest tests/ -v
 | Topic | Doc |
 |---|---|
 | Getting high scores with RL, checkpoints, TensorBoard | **[docs/rl-training.md](docs/rl-training.md)** |
+| **GPU acceleration, parallel workers, early stopping, model status** | **[docs/efficient-training.md](docs/efficient-training.md)** |
 | All CLI flags, parallel mode, result layout | **[docs/cli-reference.md](docs/cli-reference.md)** |
 | TUI / GUI / Web UI wizards | **[docs/ui-wizards.md](docs/ui-wizards.md)** |
 
