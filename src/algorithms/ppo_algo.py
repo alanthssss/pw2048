@@ -983,7 +983,7 @@ class PPOAlgorithmV3(BaseAlgorithm):
                 self._net.parameters(),  # type: ignore[union-attr]
                 lr=lr,
             )
-            self._optimizer = _Adam(lr=lr)  # kept for numpy-format adam state in checkpoints
+            self._optimizer = _Adam(lr=lr)  # used only for the NumPy-format checkpoint adam state (not for torch training)
         else:
             self._net = _ActorCritic(_N_STATE_V3, hidden_size, self._np_rng)
             self._optimizer = _Adam(lr=lr)
@@ -1266,7 +1266,8 @@ class PPOAlgorithmV3(BaseAlgorithm):
 
         device = _torch.device(self._torch_device)  # type: ignore[arg-type]
         states_t       = _torch.from_numpy(states_np).to(device)
-        actions_t      = _torch.from_numpy(actions_np.astype(np.int64)).to(device)
+        # Convert int32 actions directly to int64 tensor without an intermediate numpy copy.
+        actions_t      = _torch.from_numpy(actions_np).to(device=device, dtype=_torch.int64)
         old_lp_t       = _torch.from_numpy(old_log_probs_np).to(device)
         advantages_t   = _torch.from_numpy(advantages_np).to(device)
         returns_t      = _torch.from_numpy(returns_np).to(device)
@@ -1301,8 +1302,13 @@ class PPOAlgorithmV3(BaseAlgorithm):
 
         Saved state
         -----------
-        * Actor-critic network weights (in NumPy format for backend portability)
-        * Adam optimizer state (step counter, first and second moment vectors)
+        * Actor-critic network weights (in NumPy format for backend portability —
+          checkpoints created with the PyTorch backend can be loaded by the NumPy
+          backend and vice versa).
+        * Adam optimizer state (step counter, first and second moment vectors);
+          **only saved when using the NumPy backend** — the PyTorch Adam optimizer
+          state is not serialised, so it resets when the checkpoint is loaded.
+          Network weights (the critical state) are always preserved.
 
         The rollout buffer is intentionally **not** saved — PPO is on-policy
         so stale rollout data from a previous run would be invalid.

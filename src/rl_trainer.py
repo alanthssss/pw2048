@@ -672,10 +672,15 @@ class RLTrainer:
             algo_module = type(algo).__module__
             algo_class  = type(algo).__name__
 
+            # Generate diverse, reproducible seeds by hashing (base_seed, worker_idx).
+            # Using the algorithm's internal numpy RNG bit generator state as a seed
+            # root ensures per-run reproducibility while avoiding seed collisions.
+            base_seed = int(getattr(getattr(algo, "_np_rng", None), "integers", lambda *_: 0)(0, 2**31))
+
             futures: dict = {}
             with concurrent.futures.ProcessPoolExecutor(max_workers=n) as executor:
                 for i in range(n):
-                    seed = (i + 1) * 1_000
+                    seed = abs(hash((base_seed, i))) % (2**31)
                     f = executor.submit(
                         _parallel_train_worker,
                         algo_module,
@@ -687,9 +692,12 @@ class RLTrainer:
                     )
                     futures[f] = i
 
-            # Collect results.
+            # Collect results as they complete (instead of blocking on each future in
+            # submission order), which reduces total wall-clock time when workers
+            # finish at different times.
             results: list = []
-            for f, worker_idx in futures.items():
+            for f in concurrent.futures.as_completed(futures):
+                worker_idx = futures[f]
                 try:
                     result = f.result()
                     results.append((result["mean_score"], worker_idx, worker_ckpt_paths[worker_idx], result))
@@ -700,8 +708,12 @@ class RLTrainer:
                             f"max_score={result['max_score']}"
                         )
                 except Exception as exc:  # noqa: BLE001
+                    import traceback
                     if self._verbose:
-                        print(f"  worker {worker_idx} failed: {exc}")
+                        print(
+                            f"  worker {worker_idx} failed: {exc}\n"
+                            + traceback.format_exc()
+                        )
 
             if not results:
                 # All workers failed — fall back to sequential training.

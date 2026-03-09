@@ -878,7 +878,7 @@ class DQNAlgorithmV3(BaseAlgorithm):
                 self._q_net.parameters(),  # type: ignore[union-attr]
                 lr=lr,
             )
-            self._optimizer = _Adam(lr=lr)  # kept for numpy-format adam state in checkpoints
+            self._optimizer = _Adam(lr=lr)  # used only for the NumPy-format checkpoint adam state (not for torch training)
         else:
             self._q_net = _QNetwork(_N_STATE_V3, hidden_size, _N_ACTIONS, self._np_rng)
             self._target_net = _QNetwork(_N_STATE_V3, hidden_size, _N_ACTIONS, self._np_rng)
@@ -1083,7 +1083,8 @@ class DQNAlgorithmV3(BaseAlgorithm):
 
         device = _torch.device(self._torch_device)  # type: ignore[arg-type]
         S  = _torch.from_numpy(np.array([e[0] for e in batch], dtype=np.float32)).to(device)
-        A  = _torch.from_numpy(np.array([e[1] for e in batch], dtype=np.int64)).to(device)
+        # Actions stored as int in the buffer; build int32 array then cast to int64 on device.
+        A  = _torch.from_numpy(np.array([e[1] for e in batch], dtype=np.int32)).to(device=device, dtype=_torch.int64)
         R  = _torch.from_numpy(np.array([e[2] for e in batch], dtype=np.float32)).to(device)
         S2 = _torch.from_numpy(np.array([e[3] for e in batch], dtype=np.float32)).to(device)
         D  = _torch.from_numpy(np.array([e[4] for e in batch], dtype=np.float32)).to(device)
@@ -1115,7 +1116,10 @@ class DQNAlgorithmV3(BaseAlgorithm):
         * Q-network and target-network weights (in NumPy format for backend
           portability — checkpoints created with the PyTorch backend can be
           loaded by the NumPy backend and vice versa).
-        * Adam optimizer state (step counter, first and second moment vectors)
+        * Adam optimizer state (step counter, first and second moment vectors);
+          **only saved when using the NumPy backend** — the PyTorch Adam
+          optimizer state is not serialised, so it resets when the checkpoint
+          is loaded.  Network weights (the critical state) are always preserved.
         * Current ε (exploration rate) and global step counter
 
         The replay buffer is intentionally **not** saved — it is large (up to
