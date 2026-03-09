@@ -30,8 +30,12 @@ def _mock_answers(**overrides):
         "show": False,
         "keep_str": "10",
         "report": False,
-        "use_s3": False,
         "proceed": True,
+        # RL training (DQN/PPO only)
+        "train_games": "0",
+        "eval_freq": "50",
+        "n_eval_games": "20",
+        "tensorboard_dir": "",
     }
     defaults.update(overrides)
     return defaults
@@ -47,11 +51,9 @@ def _patch_tui(answers: dict):
 
     @contextlib.contextmanager
     def _ctx():
-        call_log: list[str] = []
 
         def _select_side_effect(*args, **kwargs):
             m = MagicMock()
-            # Determine which select call this is by order of call_log
             if "Algorithm:" in args[0]:
                 m.ask.return_value = answers["algorithm"]
             elif "Run mode:" in args[0]:
@@ -64,20 +66,26 @@ def _patch_tui(answers: dict):
             m = MagicMock()
             prompt = args[0] if args else kwargs.get("message", "")
             prompt_lower = prompt.lower()
-            if "games" in prompt_lower:
+            if "version" in prompt_lower:
+                m.ask.return_value = answers.get("version_tag", "")
+            elif "number of games per run" in prompt_lower:
                 m.ask.return_value = answers["games"]
             elif "number of runs" in prompt_lower:
                 m.ask.return_value = answers["runs"]
             elif "parallel" in prompt_lower:
                 m.ask.return_value = answers["parallel"]
-            elif "output" in prompt_lower:
+            elif "output directory" in prompt_lower:
                 m.ask.return_value = answers["output"]
+            elif "fast training games" in prompt_lower or "training games" in prompt_lower:
+                m.ask.return_value = answers["train_games"]
+            elif "eval frequency" in prompt_lower:
+                m.ask.return_value = answers["eval_freq"]
+            elif "eval games per round" in prompt_lower:
+                m.ask.return_value = answers["n_eval_games"]
+            elif "tensorboard" in prompt_lower:
+                m.ask.return_value = answers["tensorboard_dir"]
             elif "keep" in prompt_lower:
                 m.ask.return_value = answers["keep_str"]
-            elif "bucket" in prompt_lower:
-                m.ask.return_value = answers.get("s3_bucket", "my-bucket")
-            elif "prefix" in prompt_lower:
-                m.ask.return_value = answers.get("s3_prefix", "results")
             else:
                 m.ask.return_value = answers.get("output", "results")
             return m
@@ -89,10 +97,6 @@ def _patch_tui(answers: dict):
                 m.ask.return_value = answers["show"]
             elif "report" in prompt.lower():
                 m.ask.return_value = answers["report"]
-            elif "s3" in prompt.lower():
-                m.ask.return_value = answers["use_s3"]
-            elif "public" in prompt.lower():
-                m.ask.return_value = answers.get("s3_public", False)
             elif "proceed" in prompt.lower():
                 m.ask.return_value = answers["proceed"]
             else:
@@ -181,11 +185,6 @@ class TestRunTuiCustomMode:
             result = run_tui()
         assert "--mode" not in result
 
-    def test_no_s3_flags_by_default(self):
-        with _patch_tui(_mock_answers(use_s3=False)):
-            result = run_tui()
-        assert "--s3-bucket" not in result
-
 
 class TestRunTuiPresetMode:
     def test_dev_mode_uses_mode_flag(self):
@@ -214,38 +213,6 @@ class TestRunTuiPresetMode:
             result = run_tui()
         assert "--mode" in result
         assert result[result.index("--mode") + 1] == "benchmark"
-
-
-class TestRunTuiS3:
-    def test_s3_bucket_flag_present_when_enabled(self):
-        with _patch_tui(
-            _mock_answers(use_s3=True, s3_bucket="my-bucket", s3_prefix="results")
-        ):
-            result = run_tui()
-        assert "--s3-bucket" in result
-        assert result[result.index("--s3-bucket") + 1] == "my-bucket"
-
-    def test_s3_prefix_flag_present_when_enabled(self):
-        with _patch_tui(
-            _mock_answers(use_s3=True, s3_bucket="my-bucket", s3_prefix="pfx")
-        ):
-            result = run_tui()
-        assert "--s3-prefix" in result
-        assert result[result.index("--s3-prefix") + 1] == "pfx"
-
-    def test_s3_public_flag_absent_by_default(self):
-        with _patch_tui(
-            _mock_answers(use_s3=True, s3_bucket="b", s3_public=False)
-        ):
-            result = run_tui()
-        assert "--s3-public" not in result
-
-    def test_s3_public_flag_present_when_set(self):
-        with _patch_tui(
-            _mock_answers(use_s3=True, s3_bucket="b", s3_public=True)
-        ):
-            result = run_tui()
-        assert "--s3-public" in result
 
 
 class TestRunTuiCancellation:
@@ -314,3 +281,76 @@ class TestRunTuiArgvParseable:
             argv = run_tui()
         args = parse_args(argv)
         assert args.algorithm == "ppo"
+
+
+# ---------------------------------------------------------------------------
+# Tests: RL training flags in run_tui
+# ---------------------------------------------------------------------------
+
+
+class TestRunTuiRLTraining:
+    """New RL training prompts shown for DQN/PPO algorithms."""
+
+    def test_no_train_games_flag_for_non_rl(self):
+        """Non-RL algorithms should never emit --train-games."""
+        with _patch_tui(_mock_answers(algorithm="random", train_games="100")):
+            result = run_tui()
+        assert "--train-games" not in result
+
+    def test_no_train_games_flag_when_zero(self):
+        """DQN with train_games=0 must not include --train-games."""
+        with _patch_tui(_mock_answers(algorithm="dqn", train_games="0")):
+            result = run_tui()
+        assert "--train-games" not in result
+
+    def test_train_games_present_for_dqn(self):
+        with _patch_tui(_mock_answers(algorithm="dqn", train_games="500")):
+            result = run_tui()
+        assert "--train-games" in result
+        assert result[result.index("--train-games") + 1] == "500"
+
+    def test_train_games_present_for_ppo(self):
+        with _patch_tui(_mock_answers(algorithm="ppo", train_games="200")):
+            result = run_tui()
+        assert "--train-games" in result
+
+    def test_eval_freq_included_with_train_games(self):
+        with _patch_tui(_mock_answers(algorithm="dqn", train_games="100", eval_freq="25")):
+            result = run_tui()
+        assert "--eval-freq" in result
+        assert result[result.index("--eval-freq") + 1] == "25"
+
+    def test_n_eval_games_included_with_train_games(self):
+        with _patch_tui(_mock_answers(algorithm="dqn", train_games="100", n_eval_games="10")):
+            result = run_tui()
+        assert "--n-eval-games" in result
+        assert result[result.index("--n-eval-games") + 1] == "10"
+
+    def test_tensorboard_dir_included_when_set(self):
+        with _patch_tui(_mock_answers(algorithm="dqn", train_games="100", tensorboard_dir="tb")):
+            result = run_tui()
+        assert "--tensorboard-dir" in result
+        assert result[result.index("--tensorboard-dir") + 1] == "tb"
+
+    def test_tensorboard_dir_absent_when_empty(self):
+        with _patch_tui(_mock_answers(algorithm="dqn", train_games="100", tensorboard_dir="")):
+            result = run_tui()
+        assert "--tensorboard-dir" not in result
+
+    def test_rl_argv_parseable(self):
+        from main import parse_args
+
+        with _patch_tui(_mock_answers(
+            algorithm="dqn",
+            train_games="200",
+            eval_freq="50",
+            n_eval_games="10",
+            tensorboard_dir="tb_logs",
+        )):
+            argv = run_tui()
+        args = parse_args(argv)
+        assert args.train_games == 200
+        assert args.eval_freq == 50
+        assert args.n_eval_games == 10
+        assert args.tensorboard_dir == "tb_logs"
+

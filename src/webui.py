@@ -26,6 +26,8 @@ _DEFAULT_KEEP = 10
 _DEFAULT_GAMES = 20
 _DEFAULT_RUNS = 1
 _DEFAULT_PARALLEL = 1
+_DEFAULT_EVAL_FREQ = 50
+_DEFAULT_N_EVAL_GAMES = 20
 
 # ---------------------------------------------------------------------------
 # HTML pages — loaded from src/templates/ so styling lives in dedicated files
@@ -62,12 +64,27 @@ def _form_to_argv(form: dict[str, list[str]]) -> list[str]:
     mode_choice = _get("mode", "custom")
     output = _get("output", "results") or "results"
     keep = _get("keep", str(_DEFAULT_KEEP))
+    algo_version = _get("algo_version", "").strip()
 
     argv: list[str] = [
         "--algorithm", algorithm,
         "--output", output,
         "--keep", keep,
     ]
+
+    if algo_version:
+        argv += ["--algo-version", algo_version]
+
+    train_games = _get("train_games", "0").strip()
+    if train_games and int(train_games) > 0:
+        argv += [
+            "--train-games", train_games,
+            "--eval-freq", _get("eval_freq", str(_DEFAULT_EVAL_FREQ)).strip() or str(_DEFAULT_EVAL_FREQ),
+            "--n-eval-games", _get("n_eval_games", str(_DEFAULT_N_EVAL_GAMES)).strip() or str(_DEFAULT_N_EVAL_GAMES),
+        ]
+        tensorboard_dir = _get("tensorboard_dir", "").strip()
+        if tensorboard_dir:
+            argv += ["--tensorboard-dir", tensorboard_dir]
 
     if mode_choice != "custom":
         argv += ["--mode", mode_choice]
@@ -82,12 +99,6 @@ def _form_to_argv(form: dict[str, list[str]]) -> list[str]:
         argv.append("--show")
     if "report" in form:
         argv.append("--report")
-
-    bucket = _get("s3_bucket").strip()
-    if bucket:
-        argv += ["--s3-bucket", bucket, "--s3-prefix", _get("s3_prefix", "results")]
-        if "s3_public" in form:
-            argv.append("--s3-public")
 
     return argv
 

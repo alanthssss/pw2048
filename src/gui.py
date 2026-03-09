@@ -17,11 +17,18 @@ import os
 # Constants (mirror main.py to avoid circular imports)
 # ---------------------------------------------------------------------------
 
-_ALGORITHMS = ["random", "greedy", "heuristic", "expectimax", "mcts", "dqn", "ppo"]
+_ALGORITHMS = [
+    "random", "greedy", "heuristic", "expectimax",
+    "mcts-v1", "mcts-v2", "mcts",
+    "dqn-v1", "dqn-v2", "dqn-v3", "dqn",
+    "ppo-v1", "ppo-v2", "ppo-v3", "ppo",
+]
 _DEFAULT_KEEP = 10
 _DEFAULT_GAMES = 20
 _DEFAULT_RUNS = 1
 _DEFAULT_PARALLEL = 1
+_DEFAULT_EVAL_FREQ = 50
+_DEFAULT_N_EVAL_GAMES = 20
 
 
 # ---------------------------------------------------------------------------
@@ -38,9 +45,11 @@ def _build_argv(
     show: bool,
     keep: str,
     report: bool,
-    s3_bucket: str,
-    s3_prefix: str,
-    s3_public: bool,
+    version: str = "",
+    train_games: str = "0",
+    eval_freq: str = str(_DEFAULT_EVAL_FREQ),
+    n_eval_games: str = str(_DEFAULT_N_EVAL_GAMES),
+    tensorboard_dir: str = "",
 ) -> list[str]:
     """Convert GUI form values to an argv list for :func:`main.parse_args`.
 
@@ -63,12 +72,16 @@ def _build_argv(
         String representation of the keep-N-runs integer.
     report:
         Whether to pass ``--report``.
-    s3_bucket:
-        S3 bucket name (empty string → omit S3 flags).
-    s3_prefix:
-        S3 key prefix.
-    s3_public:
-        Whether to pass ``--s3-public``.
+    version:
+        Optional algorithm version tag override.  Empty string → omit flag.
+    train_games:
+        Number of fast in-process training games (``"0"`` → omit flag).
+    eval_freq:
+        EvalCallback frequency used when *train_games* > 0.
+    n_eval_games:
+        Number of eval games per EvalCallback round.
+    tensorboard_dir:
+        TensorBoard / CSV log directory.  Empty string → omit flag.
 
     Returns
     -------
@@ -80,6 +93,16 @@ def _build_argv(
         "--output", output or "results",
         "--keep", keep,
     ]
+    if version.strip():
+        argv += ["--algo-version", version.strip()]
+    if train_games.strip() and int(train_games.strip()) > 0:
+        argv += [
+            "--train-games", train_games.strip(),
+            "--eval-freq", eval_freq.strip() or str(_DEFAULT_EVAL_FREQ),
+            "--n-eval-games", n_eval_games.strip() or str(_DEFAULT_N_EVAL_GAMES),
+        ]
+        if tensorboard_dir.strip():
+            argv += ["--tensorboard-dir", tensorboard_dir.strip()]
     if mode_choice != "custom":
         argv += ["--mode", mode_choice]
     else:
@@ -92,11 +115,6 @@ def _build_argv(
         argv.append("--show")
     if report:
         argv.append("--report")
-    bucket = s3_bucket.strip()
-    if bucket:
-        argv += ["--s3-bucket", bucket, "--s3-prefix", s3_prefix or "results"]
-        if s3_public:
-            argv.append("--s3-public")
     return argv
 
 
@@ -176,6 +194,16 @@ def run_gui() -> list[str]:
     ).grid(row=row, column=1, sticky="w", **PAD)
     row += 1
 
+    _label("Version tag:")
+    version_var = tk.StringVar(value="")
+    ttk.Entry(outer, textvariable=version_var, width=20).grid(
+        row=row, column=1, columnspan=2, sticky="w", **PAD
+    )
+    ttk.Label(outer, text="(blank → algorithm default)", font=("", 8, "italic")).grid(
+        row=row, column=2, sticky="w", **PAD
+    )
+    row += 1
+
     _sep()
 
     # ── Mode ──────────────────────────────────────────────────────────────
@@ -239,6 +267,62 @@ def run_gui() -> list[str]:
 
     _sep()
 
+    # ── RL Training (DQN / PPO only) ──────────────────────────────────────
+    ttk.Label(outer, text="RL Training (DQN / PPO only)", font=("", 9, "italic")).grid(
+        row=row, column=0, columnspan=3, sticky="w", **PAD
+    )
+    row += 1
+
+    _label("Train games:")
+    train_games_var = tk.StringVar(value="0")
+    ttk.Entry(outer, textvariable=train_games_var, width=10).grid(
+        row=row, column=1, sticky="w", **PAD
+    )
+    ttk.Label(outer, text="(0 = skip; in-process, no browser)", font=("", 8, "italic")).grid(
+        row=row, column=2, sticky="w", **PAD
+    )
+    row += 1
+
+    _label("Eval freq:")
+    eval_freq_var = tk.StringVar(value=str(_DEFAULT_EVAL_FREQ))
+    ttk.Entry(outer, textvariable=eval_freq_var, width=10).grid(
+        row=row, column=1, sticky="w", **PAD
+    )
+    ttk.Label(outer, text="(eval every N train games)", font=("", 8, "italic")).grid(
+        row=row, column=2, sticky="w", **PAD
+    )
+    row += 1
+
+    _label("Eval games:")
+    n_eval_games_var = tk.StringVar(value=str(_DEFAULT_N_EVAL_GAMES))
+    ttk.Entry(outer, textvariable=n_eval_games_var, width=10).grid(
+        row=row, column=1, sticky="w", **PAD
+    )
+    row += 1
+
+    _label("TensorBoard dir:")
+    tensorboard_var = tk.StringVar(value="")
+    ttk.Entry(outer, textvariable=tensorboard_var, width=24).grid(
+        row=row, column=1, sticky="w", **PAD
+    )
+    ttk.Button(
+        outer,
+        text="Browse…",
+        command=lambda: tensorboard_var.set(
+            filedialog.askdirectory(initialdir=tensorboard_var.get() or ".")
+            or tensorboard_var.get()
+        ),
+    ).grid(row=row, column=2, sticky="w", **PAD)
+    row += 1
+    ttk.Label(
+        outer,
+        text="(blank → disabled; CSV + TensorBoard logs)",
+        font=("", 8, "italic"),
+    ).grid(row=row, column=1, columnspan=2, sticky="w", **PAD)
+    row += 1
+
+    _sep()
+
     # ── Misc options ──────────────────────────────────────────────────────
     _label("Show browser:")
     show_var = tk.BooleanVar(value=False)
@@ -255,35 +339,6 @@ def run_gui() -> list[str]:
     _label("HTML report:")
     report_var = tk.BooleanVar(value=False)
     ttk.Checkbutton(outer, variable=report_var).grid(row=row, column=1, sticky="w", **PAD)
-    row += 1
-
-    _sep()
-
-    # ── S3 options ────────────────────────────────────────────────────────
-    ttk.Label(outer, text="S3 (optional)", font=("", 9, "italic")).grid(
-        row=row, column=0, columnspan=3, sticky="w", **PAD
-    )
-    row += 1
-
-    _label("S3 bucket:")
-    s3_bucket_var = tk.StringVar(value="")
-    ttk.Entry(outer, textvariable=s3_bucket_var, width=28).grid(
-        row=row, column=1, columnspan=2, sticky="w", **PAD
-    )
-    row += 1
-
-    _label("S3 prefix:")
-    s3_prefix_var = tk.StringVar(value="results")
-    ttk.Entry(outer, textvariable=s3_prefix_var, width=28).grid(
-        row=row, column=1, columnspan=2, sticky="w", **PAD
-    )
-    row += 1
-
-    _label("Public-read:")
-    s3_public_var = tk.BooleanVar(value=False)
-    ttk.Checkbutton(outer, variable=s3_public_var).grid(
-        row=row, column=1, sticky="w", **PAD
-    )
     row += 1
 
     _sep()
@@ -317,6 +372,16 @@ def run_gui() -> list[str]:
             if not positive_only and int(val) < 0:
                 err_var.set(f"'{field_label}' must be 0 or greater.")
                 return
+        # Validate RL training fields
+        for field_label, var in [
+            ("Train games", train_games_var),
+            ("Eval freq", eval_freq_var),
+            ("Eval games", n_eval_games_var),
+        ]:
+            val = var.get().strip()
+            if not val.isdigit():
+                err_var.set(f"'{field_label}' must be an integer (got '{val}').")
+                return
 
         argv = _build_argv(
             algorithm=algo_var.get(),
@@ -328,9 +393,11 @@ def run_gui() -> list[str]:
             show=bool(show_var.get()),
             keep=keep_var.get().strip(),
             report=bool(report_var.get()),
-            s3_bucket=s3_bucket_var.get(),
-            s3_prefix=s3_prefix_var.get(),
-            s3_public=bool(s3_public_var.get()),
+            version=version_var.get(),
+            train_games=train_games_var.get().strip(),
+            eval_freq=eval_freq_var.get().strip(),
+            n_eval_games=n_eval_games_var.get().strip(),
+            tensorboard_dir=tensorboard_var.get().strip(),
         )
         result.append(argv)
         root.destroy()

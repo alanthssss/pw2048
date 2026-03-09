@@ -36,9 +36,6 @@ def _argv(**kwargs) -> list[str]:
         show=False,
         keep="10",
         report=False,
-        s3_bucket="",
-        s3_prefix="results",
-        s3_public=False,
     )
     defaults.update(kwargs)
     return _build_argv(**defaults)  # type: ignore[arg-type]
@@ -102,33 +99,10 @@ class TestBuildArgvCustomMode:
     def test_report_present_when_enabled(self):
         assert "--report" in _argv(report=True)
 
-    def test_no_s3_flags_when_bucket_empty(self):
-        result = _argv(s3_bucket="")
+    def test_no_s3_flags_emitted(self):
+        result = _argv()
         assert "--s3-bucket" not in result
-        assert "--s3-prefix" not in result
-
-    def test_s3_flags_present_when_bucket_set(self):
-        result = _argv(s3_bucket="my-bucket", s3_prefix="pfx")
-        assert "--s3-bucket" in result
-        assert result[result.index("--s3-bucket") + 1] == "my-bucket"
-        assert "--s3-prefix" in result
-        assert result[result.index("--s3-prefix") + 1] == "pfx"
-
-    def test_s3_public_absent_by_default(self):
-        result = _argv(s3_bucket="b", s3_public=False)
         assert "--s3-public" not in result
-
-    def test_s3_public_present_when_set(self):
-        result = _argv(s3_bucket="b", s3_public=True)
-        assert "--s3-public" in result
-
-    def test_s3_public_ignored_when_no_bucket(self):
-        result = _argv(s3_bucket="", s3_public=True)
-        assert "--s3-public" not in result
-
-    def test_whitespace_bucket_treated_as_empty(self):
-        result = _argv(s3_bucket="   ")
-        assert "--s3-bucket" not in result
 
 
 class TestBuildArgvPresetMode:
@@ -200,6 +174,63 @@ class TestBuildArgvParseable:
 
 
 # ---------------------------------------------------------------------------
+# Tests: RL training flags in _build_argv
+# ---------------------------------------------------------------------------
+
+class TestBuildArgvRLTraining:
+    """New RL training flags: --train-games, --eval-freq, --n-eval-games,
+    --tensorboard-dir."""
+
+    def test_train_games_absent_when_zero(self):
+        result = _argv(train_games="0")
+        assert "--train-games" not in result
+
+    def test_train_games_present_when_positive(self):
+        result = _argv(train_games="5000")
+        assert "--train-games" in result
+        assert result[result.index("--train-games") + 1] == "5000"
+
+    def test_eval_freq_included_with_train_games(self):
+        result = _argv(train_games="100", eval_freq="25")
+        assert "--eval-freq" in result
+        assert result[result.index("--eval-freq") + 1] == "25"
+
+    def test_n_eval_games_included_with_train_games(self):
+        result = _argv(train_games="100", n_eval_games="10")
+        assert "--n-eval-games" in result
+        assert result[result.index("--n-eval-games") + 1] == "10"
+
+    def test_tensorboard_dir_included_when_set(self):
+        result = _argv(train_games="100", tensorboard_dir="tb_logs")
+        assert "--tensorboard-dir" in result
+        assert result[result.index("--tensorboard-dir") + 1] == "tb_logs"
+
+    def test_tensorboard_dir_absent_when_empty(self):
+        result = _argv(train_games="100", tensorboard_dir="")
+        assert "--tensorboard-dir" not in result
+
+    def test_rl_flags_absent_when_train_games_zero(self):
+        result = _argv(train_games="0", tensorboard_dir="tb_logs")
+        assert "--train-games" not in result
+        assert "--eval-freq" not in result
+        assert "--n-eval-games" not in result
+        assert "--tensorboard-dir" not in result
+
+    def test_rl_argv_parseable_by_main(self):
+        from main import parse_args
+
+        result = _argv(
+            algorithm="dqn",
+            train_games="200",
+            eval_freq="50",
+            n_eval_games="10",
+            tensorboard_dir="tb_logs",
+        )
+        args = parse_args(result)
+        assert args.train_games == 200
+        assert args.eval_freq == 50
+        assert args.n_eval_games == 10
+        assert args.tensorboard_dir == "tb_logs"
 # Tests: run_gui() when tkinter is absent
 # ---------------------------------------------------------------------------
 

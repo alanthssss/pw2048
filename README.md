@@ -6,92 +6,33 @@ Automate the [2048 game](https://play2048.co/) using [Playwright](https://playwr
 
 | 2048 Game | Web Launcher |
 |:---------:|:------------:|
-| ![2048 game launch page](https://github.com/user-attachments/assets/971b6d73-36f0-4d47-b9da-0c27a9c3b5f2) | ![pw2048 Web Launcher](https://github.com/user-attachments/assets/08d9b84a-8180-475b-ae71-63b753c0d55a) |
+| ![2048 game launch page](https://github.com/user-attachments/assets/971b6d73-36f0-4d47-b9da-0c27a9c3b5f2) | ![pw2048 Web Launcher](https://github.com/user-attachments/assets/bbfba22f-7cdc-44b3-82f5-46dc3f8c983b) |
 
 ## At a Glance
 
 | Field | Value |
 |---|---|
-| **Current best algorithm** | Heuristic |
-| **Highest best tile** | — (run benchmarks to populate) |
+| **Current best algorithm** | Expectimax |
+| **Highest avg score** | ~33 000 (Expectimax, 73% win rate) |
+| **Best learning algorithm** | DQN-v3 / PPO-v3 (behavioural-cloning pre-training) |
 | **Benchmark protocol** | 5 runs × 500 games (auto-parallel) |
 
 ## Current Leaderboard
 
 > Run `python main.py --mode benchmark --report` to populate this table.
 
-| Rank | Algorithm | Stage | Runs | Avg Score | Median | P90 | Best Tile | Win Rate |
-|---:|---|---|---:|---:|---:|---:|---:|---:|
-| — | — | — | — | — | — | — | — | — |
+| Rank | Algorithm | Version | Avg Score | P90 | Max Score | Best Tile | Win Rate |
+|---:|---|---|---:|---:|---:|---:|---:|
+| 1 | Expectimax | v1 | 33 030 | 60 266 | 132 412 | 8192 | 73.4% |
+| 2 | Heuristic | v1 | 16 061 | 28 185 | 61 064 | 4096 | 21.6% |
+| 3 | MCTS | v2 | 7 821 | 12 649 | 15 416 | 1024 | 0.0% |
+| 4 | Greedy | v1 | 3 050 | 5 416 | 13 820 | 1024 | 0.0% |
+| 5 | Random | v1 | 1 102 | 1 720 | 3 324 | 256 | 0.0% |
+| 6 | DQN-v3* | v3 | — | — | — | — | — |
+| 7 | PPO-v3* | v3 | — | — | — | — | — |
 
-The HTML dashboard (`--report`) keeps this table live and sorted by **Avg Score**.
-
-## Benchmark Protocol
-
-| Mode | Runs | Games / Run | Parallel |
-|---|---|---|---|
-| `dev` | 1 | 100 | auto (`os.cpu_count()`) |
-| `release` | 1 | 1 000 | auto |
-| `benchmark` | 5 | 500 | auto |
-
-```bash
-# Quick dev scratch (100 games)
-python main.py --mode dev
-
-# Release quality (1 000 games)
-python main.py --mode release --report
-
-# Full benchmark (5 × 500 games, HTML leaderboard)
-python main.py --mode benchmark --report
-```
-
-## Roadmap
-
-### Baselines
-- [x] **Random** — pick a random direction each turn
-- [x] **Greedy** — pick the move that maximises immediate score gain
-- [x] **Heuristic** — hand-crafted heuristics (e.g. corner strategy, monotonicity)
-
-### Search Algorithms
-- [x] **Expectimax** — game-tree search with chance nodes for tile spawns
-- [x] **MCTS** — Monte Carlo Tree Search
-
-### Learning Algorithms
-- [x] **DQN** — Deep Q-Network (reinforcement learning)
-- [x] **PPO** — Proximal Policy Optimization (reinforcement learning)
-
-## Project structure
-
-```
-pw2048/
-├── game.html                  # Self-contained 2048 game (served locally)
-├── main.py                    # CLI entry-point
-├── requirements.txt
-├── src/
-│   ├── game.py                # Playwright wrapper (board read, move execution)
-│   ├── runner.py              # Run N games (sequential or parallel), collect results
-│   ├── visualize.py           # Matplotlib charts from results
-│   ├── report.py              # Self-contained HTML dashboard generator
-│   ├── storage.py             # S3 upload / prune helpers (lazy boto3 import)
-│   ├── tui.py                 # Interactive TUI wizard (questionary + rich)
-│   ├── gui.py                 # Desktop GUI wizard (tkinter – stdlib)
-│   ├── webui.py               # Web UI launcher (http.server – stdlib)
-│   └── algorithms/
-│       ├── base.py            # Abstract BaseAlgorithm class
-│       ├── random_algo.py     # Random algorithm
-│       ├── greedy_algo.py     # Greedy (maximise immediate score gain)
-│       ├── heuristic_algo.py  # Heuristic (empty tiles, monotonicity, corner, merge)
-│       ├── expectimax_algo.py # Expectimax (game-tree search with chance nodes)
-│       ├── mcts_algo.py       # MCTS (Monte Carlo Tree Search)
-│       ├── dqn_algo.py        # DQN (Deep Q-Network, reinforcement learning)
-│       └── ppo_algo.py        # PPO (Proximal Policy Optimization, reinforcement learning)
-└── tests/
-    ├── test_game_and_algorithms.py
-    ├── test_storage_and_report.py
-    ├── test_tui.py
-    ├── test_gui.py
-    └── test_webui.py
-```
+\* DQN-v3 / PPO-v3 include behavioural-cloning pre-training.
+See **[RL Training Guide →](docs/rl-training.md)** to push their scores higher.
 
 ## Quick start
 
@@ -100,272 +41,104 @@ pw2048/
 pip install -r requirements.txt
 python -m playwright install chromium
 
-# Launch the interactive TUI wizard
-python main.py --tui
-
-# Launch the desktop GUI wizard (tkinter)
-python main.py --gui
-
-# Launch the web UI wizard in your browser
-python main.py --web
-
 # Run 20 games with the random algorithm (default)
 python main.py
 
-# Run 50 games and save charts to a custom directory
-python main.py --games 50 --output my_results
-
-# Show the browser window while playing
-python main.py --games 5 --show
-```
-
-Charts and a CSV with raw game data are saved under `results/<AlgorithmName>/run_<YYYYMMDD_HHMMSS>/` (e.g. `results/Random/run_20260307_120000/`).
-Each run directory contains `results.csv`, `chart.png`, and `metrics.json`.
-All runs for the same algorithm are grouped together, making it easy to compare them side-by-side.
-Use `--output` to change the root directory.
-
-## Interactive TUI wizard
-
-Not a fan of memorising flags?  Run the wizard:
-
-```bash
+# Run with the TUI wizard (arrow-key menus)
 python main.py --tui
-```
 
-The wizard walks you through every option step-by-step with arrow-key
-selection menus and validated text prompts:
-
-```
-╭───────────────────────────────────────────────╮
-│  pw2048 – Interactive Launcher                │
-│  Use arrow keys to select, Enter to confirm.  │
-╰───────────────────────────────────────────────╯
-
-? Algorithm:        greedy
-? Run mode:         custom – set games / runs / parallel manually
-? Number of games per run:  50
-? Number of runs:           2
-? Parallel browser workers: 2
-? Output directory:         results
-? Show browser window while playing?  No
-? Keep N most-recent runs per algorithm (0 = keep all):  10
-? Generate HTML report?   Yes
-? Upload results to S3?   No
-
-   Configuration Summary
-┌──────────────┬──────────┐
-│ Algorithm    │ greedy   │
-│ Games / run  │ 50       │
-│ Runs         │ 2        │
-│ Workers      │ 2        │
-│ Output dir   │ results/ │
-│ Show browser │ no       │
-│ Keep N runs  │ 10       │
-│ HTML report  │ yes      │
-│ S3 bucket    │ –        │
-└──────────────┴──────────┘
-
-? Proceed? Yes
-```
-
-Press <kbd>Ctrl-C</kbd> at any prompt, or answer **No** at the final
-confirmation, to abort without running any games.
-
-The wizard covers all parameters available via CLI flags:
-
-| Wizard step | Equivalent flag(s) |
-|---|---|
-| Algorithm | `--algorithm` |
-| Run mode (preset) | `--mode` |
-| Games / runs / workers (custom) | `--games`, `--runs`, `--parallel` |
-| Output directory | `--output` |
-| Show browser | `--show` |
-| Keep N runs | `--keep` |
-| HTML report | `--report` |
-| S3 upload | `--s3-bucket`, `--s3-prefix`, `--s3-public` |
-
-## Desktop GUI wizard
-
-Prefer a point-and-click interface?  Launch the native tkinter window:
-
-```bash
-python main.py --gui
-```
-
-The window exposes the same options as the TUI — algorithm, mode, games/runs/workers,
-output directory, show-browser, keep-N, HTML report, and optional S3 upload — all
-in a standard form layout with dropdown menus, checkboxes, and text fields.
-
-**Prerequisites:** tkinter ships with Python on Windows and macOS.  On
-Debian/Ubuntu it requires one extra package:
-
-```bash
-sudo apt-get install python3-tk
-```
-
-## Web UI wizard
-
-Prefer a browser-based form?  Start the local web launcher:
-
-```bash
+# Run with the web UI wizard (browser form)
 python main.py --web
+
+# Full benchmark with HTML leaderboard
+python main.py --mode benchmark --report
+
+# Fast in-process RL training (no browser, 10–50× faster)
+python main.py --algorithm dqn \
+               --train-games 5000 \
+               --checkpoint-dir checkpoints \
+               --tensorboard-dir tb_logs
 ```
 
-pw2048 starts an HTTP server on a random free port, prints the URL, and opens it
-in your default browser automatically:
+## 4-layer RL Training Pipeline
 
-```
-  Web UI → http://127.0.0.1:54321/
-  (fill in the form and click Launch — check your terminal for progress)
-```
+The system exposes a structured Env / Train / Eval / Play stack for sustained
+high-score improvement:
 
-The form stays open until you click **Launch ▶**, at which point it returns a
-confirmation page, shuts the server down, and starts the run in your terminal.
-
-![pw2048 Web Launcher](https://github.com/user-attachments/assets/08d9b84a-8180-475b-ae71-63b753c0d55a)
-
-The web UI requires **no third-party packages** — it uses only the Python
-standard library (`http.server`, `threading`, `webbrowser`).
-
-## Shell autocompletion
-
-pw2048 supports tab-completion for all CLI flags and their values via
-[argcomplete](https://kislyuk.github.io/argcomplete/).
-
-> **Note — `python main.py` vs `./main.py`**
->
-> The standard `register-python-argcomplete` command only registers completion
-> when the script is called **directly** (e.g. `./main.py`).  Because most
-> users type `python main.py`, the instructions below use
-> `activate-global-python-argcomplete`, which installs a global Python
-> completion hook that works for any `python <script>` invocation whose first
-> line contains the marker `# PYTHON_ARGCOMPLETE_OK`.
-
-### One-time setup
-
-**bash** — add to `~/.bashrc`:
-
-```bash
-eval "$(activate-global-python-argcomplete --dest -)"
-```
-
-**zsh** — add to `~/.zshrc`:
-
-```zsh
-eval "$(activate-global-python-argcomplete --dest -)"
-```
-
-Reload your shell (or run the command in your current session), then `cd` to
-the repo directory before pressing <kbd>Tab</kbd>.
-
-**fish** / other shells — see the [argcomplete docs](https://kislyuk.github.io/argcomplete/#activating-global-completion).
-
-### Usage
-
-After activation, press <kbd>Tab</kbd> after `python main.py` to see available
-flags, and again after flags like `--algorithm` or `--mode` to complete their
-values:
-
-```
-$ python main.py --algorithm <TAB>
-expectimax    greedy    heuristic    mcts    random    dqn    ppo
-
-$ python main.py --mode <TAB>
-benchmark    dev    release
-
-$ python main.py --<TAB>
---algorithm  --games  --gui  --keep  --mode  --output  --parallel
---report     --runs   --show  --s3-bucket  --s3-prefix  --s3-public
---tui        --web
-```
-
-## All CLI flags
-
-| Flag | Default | Description |
+| Layer | Module | Description |
 |---|---|---|
-| `--mode MODE` | — | Preset: `dev` (100 games, 1 run), `release` (1 000 games, 1 run), `benchmark` (500 games, 5 runs). Explicit `--games`/`--runs`/`--parallel` override the preset. |
-| `--games N` | `20` | Number of games to play per run |
-| `--runs N` | `1` | Number of times to repeat the full set of games; each run gets its own `run_<timestamp>/` directory |
-| `--algorithm NAME` | `random` | Algorithm to use (`random`, `greedy`, `heuristic`, `expectimax`, `mcts`, `dqn`, `ppo`) |
-| `--output DIR` | `results` | Root directory for run artifacts |
-| `--show` | off | Open a visible browser window while playing |
-| `--keep N` | `10` | Keep only the N most-recent runs per algorithm; pass `0` to disable pruning |
-| `--parallel N` | `1` | Number of parallel browser workers (see [Parallel execution](#parallel-execution)) |
-| `--report` | off | Generate a self-contained HTML results dashboard (`index.html`) |
-| `--s3-bucket BUCKET` | — | S3 bucket to upload artifacts and the report to (requires `boto3`) |
-| `--s3-prefix PREFIX` | `results` | Key prefix inside the S3 bucket |
-| `--s3-public` | off | Apply a public-read ACL to uploaded S3 objects |
-| `--tui` | off | Launch the interactive TUI wizard to configure all parameters step-by-step |
-| `--gui` | off | Launch the desktop GUI wizard (tkinter) to configure and start a run |
-| `--web` | off | Open the web UI launcher in the system browser to configure and start a run |
-
-## Parallel execution
-
-Use `--parallel N` to launch **N independent browser workers** simultaneously.
-Each worker runs its share of the games in a separate Chromium instance, which
-can cut wall-clock time by up to N×:
+| **Env** | `src/rl_env.py` → `Game2048Env` | Pure-Python gym-style env, no browser, 10–50× faster |
+| **Train** | `src/rl_trainer.py` → `RLTrainer` | In-process training loop; drives `choose_move()` |
+| **Eval** | `src/rl_trainer.py` → `EvalCallback` | Greedy eval every N games; saves `best_checkpoint.npz` |
+| **Play** | `src/runner.py` | Playwright browser benchmark / demo |
 
 ```bash
-# Play 40 games using 4 workers — roughly 4× faster
-python main.py --games 40 --parallel 4
+# Train, then benchmark
+python main.py --algorithm dqn \
+               --train-games 5000 --checkpoint-dir checkpoints \
+               --tensorboard-dir tb_logs --eval-freq 50 --n-eval-games 20
 
-# Combine with the HTML report
-python main.py --games 40 --parallel 4 --report
+python main.py --algorithm dqn --games 50 --checkpoint-dir checkpoints --report
+
+tensorboard --logdir tb_logs   # view training curves
 ```
 
-> **Note:** `--show` is automatically silenced when `--parallel` > 1 because
-> driving multiple headed windows simultaneously is not practical.
+→ **[Full RL Training Guide](docs/rl-training.md)**
 
-## HTML results dashboard (`--report`)
+## Roadmap
 
-Pass `--report` to generate a self-contained `index.html` in the output
-directory after each run:
+### Baselines
+- [x] **Random** — pick a random direction each turn
+- [x] **Greedy** — pick the move that maximises immediate score gain
+- [x] **Heuristic** — hand-crafted heuristics (corner strategy, monotonicity, empty tiles, merge potential)
 
-```bash
-python main.py --games 20 --report
-# → results/index.html
-```
+### Search Algorithms
+- [x] **Expectimax** — game-tree search with chance nodes for tile spawns
+- [x] **MCTS** — Monte Carlo Tree Search (v1: random rollout, v2: greedy rollout)
 
-The dashboard is fully self-contained (charts are embedded as base64 data
-URIs) and works both locally (`file://`) and when hosted on S3.
+### Learning Algorithms
+- [x] **DQN v1/v2/v3** — v3 adds BC pre-training, Adam, one-hot encoding, score reward
+- [x] **PPO v1/v2/v3** — v3 adds BC pre-training, Adam, one-hot encoding, score reward
+- [x] **4-layer Env/Train/Eval/Play** — in-process training, EvalCallback, TensorBoard
 
-**Dashboard features:**
-
-- **Sticky navigation bar** — jump-links to each algorithm's section
-- **Aggregate stats cards** — Total Games, Best Score, Avg Score, Best Tile,
-  Win Rate (computed across all retained runs)
-- **Run History accordion** — every stored run is a collapsible
-  `<details>`/`<summary>` element; the most recent run is pre-expanded
-- Each expanded run shows its **results chart** and a **per-game table**
-  (game index, score, best tile, moves, duration, win/loss)
-- Summary chips on every collapsed run: `latest`, `N games`, `avg score`,
-  `best tile`, `win%`
-
-## Example output
-
-After running `python main.py --games 30`:
+## Project structure
 
 ```
-Running 30 games with the 'Random' algorithm…
-
-  Game   1/30  score=  2424  max_tile= 256  moves= 210  won=False
-  ...
-  Game  30/30  score=   580  max_tile=  64  moves=  80  won=False
-
-Raw data saved → results/Random/run_20260307_120000/results.csv
-```
-
-After running `python main.py --games 30 --parallel 4 --report`:
-
-```
-Running 30 games with the 'Random' algorithm (4 parallel workers)…
-
-  [parallel] 30 games across 4 worker(s)…
-  [worker offset=0] Game  1  score=  1820  …
-  …
-
-Raw data saved → results/Random/run_20260307_120000/results.csv
-Report saved  → results/index.html
+pw2048/
+├── game.html                  # Self-contained 2048 game (served locally)
+├── main.py                    # CLI entry-point
+├── requirements.txt
+├── docs/                      # Detailed documentation
+│   ├── rl-training.md         # RL guide: checkpoints, 4-layer pipeline, TensorBoard
+│   ├── cli-reference.md       # All CLI flags, modes, result layout
+│   └── ui-wizards.md          # TUI / GUI / Web UI usage
+├── src/
+│   ├── game.py                # Playwright wrapper
+│   ├── runner.py              # Play layer: browser runner (sequential / parallel)
+│   ├── rl_env.py              # Env layer: Game2048Env
+│   ├── rl_trainer.py          # Train + Eval layers: RLTrainer, EvalCallback, TrainingLogger
+│   ├── visualize.py           # Matplotlib charts
+│   ├── report.py              # HTML dashboard generator
+│   ├── storage.py             # S3 upload / prune helpers
+│   ├── tui.py                 # TUI wizard (questionary + rich)
+│   ├── gui.py                 # Desktop GUI wizard (tkinter)
+│   ├── webui.py               # Web UI launcher (http.server)
+│   └── algorithms/
+│       ├── base.py
+│       ├── random_algo.py
+│       ├── greedy_algo.py
+│       ├── heuristic_algo.py
+│       ├── expectimax_algo.py
+│       ├── mcts_algo.py
+│       ├── dqn_algo.py        # DQN v1/v2/v3
+│       └── ppo_algo.py        # PPO v1/v2/v3
+└── tests/
+    ├── test_game_and_algorithms.py
+    ├── test_rl_env_and_trainer.py
+    ├── test_storage_and_report.py
+    ├── test_tui.py
+    ├── test_gui.py
+    └── test_webui.py
 ```
 
 ## Running tests
@@ -374,40 +147,11 @@ Report saved  → results/index.html
 python -m pytest tests/ -v
 ```
 
-## Result Layout
+## Further reading
 
-Each run is saved in a timestamped subdirectory:
+| Topic | Doc |
+|---|---|
+| Getting high scores with RL, checkpoints, TensorBoard | **[docs/rl-training.md](docs/rl-training.md)** |
+| All CLI flags, parallel mode, result layout | **[docs/cli-reference.md](docs/cli-reference.md)** |
+| TUI / GUI / Web UI wizards | **[docs/ui-wizards.md](docs/ui-wizards.md)** |
 
-```
-results/
-└── <AlgorithmName>/
-    └── run_<YYYYMMDD_HHMMSS>/
-        ├── results.csv      # per-game data (score, best_tile, moves, duration, won)
-        ├── chart.png        # visualisation chart
-        └── metrics.json     # run metadata (mode, games, workers, git_commit, …)
-```
-
-The HTML dashboard (`--report`) is written to `results/index.html` and contains:
-- **Hero cards** — best avg score, highest best tile, most stable & fastest algorithm
-- **Main Leaderboard** — all algorithms sorted by avg_score with full stats
-- **Stability Board** — mean/std of avg_score across multiple runs
-- **Efficiency Board** — games/second throughput per algorithm
-- **Comparison Charts** — avg/median/P90 grouped bars, score histogram, best-tile distribution, run stability
-- **Per-algorithm sections** — aggregate stats, inline charts, and run-history accordion (each run shows a metadata box with `algorithm_version`, `mode`, `games`, `parallel_workers`, `timestamp`, `git_commit`)
-
-## Adding a new algorithm
-
-1. Create `src/algorithms/my_algo.py` with a class that extends `BaseAlgorithm`
-   and implements `choose_move(board)`.
-2. Register it in `main.py`'s `ALGORITHMS` dict.
-
-```python
-from src.algorithms.base import BaseAlgorithm
-
-class MyAlgorithm(BaseAlgorithm):
-    name = "MyAlgo"
-
-    def choose_move(self, board):
-        # board is a 4×4 list of ints (0 = empty)
-        return "left"   # one of "up", "down", "left", "right"
-```

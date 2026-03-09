@@ -10,7 +10,14 @@ Usage
                    [--keep N] [--report] [--parallel N]
                    [--s3-bucket BUCKET] [--s3-prefix PREFIX] [--s3-public]
 
-    Available algorithms: random, greedy, heuristic, expectimax, mcts, dqn, ppo
+    Available algorithms: random, greedy, heuristic, expectimax,
+                          mcts-v1, mcts-v2, mcts,
+                          dqn-v1, dqn-v2, dqn-v3, dqn,
+                          ppo-v1, ppo-v2, ppo-v3, ppo
+
+    Learning algorithms (dqn/ppo) use behavioural-cloning pre-training to
+    warm-start the network before RL fine-tuning begins.  Use dqn-v3 / ppo-v3
+    (or the ``dqn`` / ``ppo`` aliases) for best results.
 
     Results are saved under a per-run subdirectory, e.g.::
 
@@ -64,6 +71,45 @@ Examples
 
     # Launch the web UI wizard in the browser
     python main.py --web
+
+    # --- Learning algorithms: get higher scores ---
+    # Quick warm-up: 100 games with DQN-v3 (BC pre-training fires automatically)
+    python main.py --algorithm dqn --mode dev
+
+    # Benchmark run: 500 games × 5 runs, HTML leaderboard
+    python main.py --algorithm dqn --mode benchmark --report
+
+    # Same with PPO-v3
+    python main.py --algorithm ppo --mode benchmark --report
+
+    # --- Persist model weights across multiple runs ---
+    # First session: 500 games, weights saved to checkpoints/DQN-v3/checkpoint.npz
+    python main.py --algorithm dqn --games 500 --checkpoint-dir checkpoints
+
+    # Second session: loads the saved weights, continues RL training from where
+    # the first run left off — no BC pre-training overhead, ε stays low.
+    python main.py --algorithm dqn --games 500 --checkpoint-dir checkpoints
+
+    # Combine with benchmark mode to run several sessions over multiple days:
+    python main.py --algorithm dqn --mode benchmark --checkpoint-dir checkpoints --report
+
+    # --- 4-layer Env / Train / Eval / Play pipeline ---
+    # Step 1: Fast in-process training (10–50× faster than browser mode).
+    # --train-games runs the RLTrainer, --tensorboard-dir writes logs you can
+    # view with: tensorboard --logdir tb_logs/DQN-v3
+    python main.py --algorithm dqn --train-games 5000 \\
+                   --checkpoint-dir checkpoints \\
+                   --tensorboard-dir tb_logs \\
+                   --eval-freq 50 --n-eval-games 20
+
+    # Step 2: After training, benchmark in the browser (loads best checkpoint).
+    python main.py --algorithm dqn --games 50 --checkpoint-dir checkpoints --report
+
+    # Training only (skip browser benchmark with --games 0):
+    python main.py --algorithm dqn --train-games 10000 \\
+                   --checkpoint-dir checkpoints \\
+                   --tensorboard-dir tb_logs \\
+                   --games 0
 """
 
 from __future__ import annotations
@@ -78,24 +124,35 @@ from pathlib import Path
 
 import argcomplete
 
-from src.algorithms.dqn_algo import DQNAlgorithm
+from src.algorithms.dqn_algo import DQNAlgorithmV1, DQNAlgorithmV2, DQNAlgorithmV3
 from src.algorithms.expectimax_algo import ExpectimaxAlgorithm
 from src.algorithms.greedy_algo import GreedyAlgorithm
 from src.algorithms.heuristic_algo import HeuristicAlgorithm
-from src.algorithms.mcts_algo import MCTSAlgorithm
-from src.algorithms.ppo_algo import PPOAlgorithm
+from src.algorithms.mcts_algo import MCTSAlgorithmV1, MCTSAlgorithmV2
+from src.algorithms.ppo_algo import PPOAlgorithmV1, PPOAlgorithmV2, PPOAlgorithmV3
 from src.algorithms.random_algo import RandomAlgorithm
 from src.runner import run_games
 from src.visualize import plot_results
 
 ALGORITHMS = {
-    "random": RandomAlgorithm,
-    "greedy": GreedyAlgorithm,
-    "heuristic": HeuristicAlgorithm,
+    "random":     RandomAlgorithm,
+    "greedy":     GreedyAlgorithm,
+    "heuristic":  HeuristicAlgorithm,
     "expectimax": ExpectimaxAlgorithm,
-    "mcts": MCTSAlgorithm,
-    "dqn": DQNAlgorithm,
-    "ppo": PPOAlgorithm,
+    # MCTS — both versions registered; "mcts" is an alias for the latest.
+    "mcts-v1":    MCTSAlgorithmV1,
+    "mcts-v2":    MCTSAlgorithmV2,
+    "mcts":       MCTSAlgorithmV2,
+    # DQN — all versions registered; "dqn" is an alias for the latest.
+    "dqn-v1":     DQNAlgorithmV1,
+    "dqn-v2":     DQNAlgorithmV2,
+    "dqn-v3":     DQNAlgorithmV3,
+    "dqn":        DQNAlgorithmV3,
+    # PPO — all versions registered; "ppo" is an alias for the latest.
+    "ppo-v1":     PPOAlgorithmV1,
+    "ppo-v2":     PPOAlgorithmV2,
+    "ppo-v3":     PPOAlgorithmV3,
+    "ppo":        PPOAlgorithmV3,
 }
 
 _DEFAULT_KEEP = 10
@@ -203,6 +260,127 @@ def write_run_metadata(
     path = run_dir / "metrics.json"
     path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
     return path
+
+
+# Algorithm directories that were created before the versioning refactoring.
+# Each old name maps to the correct versioned name it should be migrated to.
+_LEGACY_NAME_MAP: dict[str, str] = {
+    "MCTS": "MCTS-v1",
+    "DQN":  "DQN-v1",
+    "PPO":  "PPO-v1",
+}
+
+
+def migrate_legacy_result_dirs(results_dir: str | Path) -> list[Path]:
+    """Rename pre-versioning algorithm result directories to their ``*-v1`` equivalents.
+
+    When the DQN / PPO / MCTS algorithm classes were refactored to expose
+    ``V1`` / ``V2`` variants the on-disk directory names changed
+    (``results/MCTS/`` → ``results/MCTS-v1/`` etc.).  Results created
+    *before* that refactoring are still stored under the old unversioned names
+    and will appear with stale labels in the HTML report.
+
+    This function performs a one-time, idempotent migration:
+
+    * If ``results/{old}/`` exists and ``results/{new}/`` does **not**, the
+      directory is simply renamed.
+    * If both ``results/{old}/`` and ``results/{new}/`` already exist, every
+      ``run_*/`` subdirectory inside the old directory is moved into the new
+      one (timestamps guarantee they won't collide) and the now-empty old
+      directory is removed.
+
+    In both cases the ``metrics.json`` files inside the run directories have
+    their ``"algorithm"`` field updated to the new name, and the
+    ``"algorithm"`` column in every ``results.csv`` is patched accordingly.
+
+    Parameters
+    ----------
+    results_dir:
+        Root results directory (e.g. ``"results"``).
+
+    Returns
+    -------
+    list[Path]
+        List of directory paths that were migrated (moved / renamed).
+    """
+    results_dir = Path(results_dir)
+    migrated: list[Path] = []
+
+    for old_name, new_name in _LEGACY_NAME_MAP.items():
+        old_dir = results_dir / old_name
+        if not old_dir.exists():
+            continue
+
+        new_dir = results_dir / new_name
+
+        if not new_dir.exists():
+            # Simple rename — no conflicts possible.
+            old_dir.rename(new_dir)
+            migrated.append(new_dir)
+        else:
+            # Both exist — move run_* subdirs from old into new.
+            run_dirs = [
+                d for d in old_dir.iterdir()
+                if d.is_dir() and d.name.startswith("run_")
+            ]
+            for run_dir in run_dirs:
+                dest = new_dir / run_dir.name
+                if not dest.exists():
+                    run_dir.rename(dest)
+                    migrated.append(dest)
+            # Remove old directory if now empty (ignoring hidden files).
+            remaining = [p for p in old_dir.iterdir() if not p.name.startswith(".")]
+            if not remaining:
+                old_dir.rmdir()
+
+        # Patch metrics.json and results.csv inside every moved run dir.
+        _patch_run_dir_names(new_dir, old_name, new_name)
+
+    if migrated:
+        print(
+            f"  Migrated legacy result dir(s): "
+            + ", ".join(f"'{_LEGACY_NAME_MAP[n]}'" for n in _LEGACY_NAME_MAP
+                        if (results_dir / _LEGACY_NAME_MAP[n]) in
+                        [m.parent if m.name.startswith("run_") else m
+                         for m in migrated])
+        )
+    return migrated
+
+
+def _patch_run_dir_names(algo_dir: Path, old_name: str, new_name: str) -> None:
+    """Update ``metrics.json`` and ``results.csv`` inside *algo_dir* run dirs.
+
+    Replaces the old algorithm name string with the new one so that every
+    stored file reflects the current versioned naming.
+    """
+    if not algo_dir.exists():
+        return
+    for run_dir in algo_dir.iterdir():
+        if not (run_dir.is_dir() and run_dir.name.startswith("run_")):
+            continue
+
+        # Patch metrics.json — update "algorithm" field.
+        meta_path = run_dir / "metrics.json"
+        if meta_path.exists():
+            try:
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
+                if meta.get("algorithm") == old_name:
+                    meta["algorithm"] = new_name
+                    meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+            except Exception:
+                pass
+
+        # Patch results.csv — update "algorithm" column values.
+        csv_path = run_dir / "results.csv"
+        if csv_path.exists():
+            try:
+                import pandas as _pd
+                df = _pd.read_csv(csv_path)
+                if "algorithm" in df.columns:
+                    df["algorithm"] = df["algorithm"].replace(old_name, new_name)
+                    df.to_csv(csv_path, index=False)
+            except Exception:
+                pass
 
 
 def prune_local_results(output_dir: Path, keep_n: int) -> list[Path]:
@@ -333,6 +511,77 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Open the web UI launcher in the system browser to configure and start a run.",
     )
+    parser.add_argument(
+        "--algo-version",
+        default=None,
+        metavar="VERSION",
+        help="Override the algorithm version tag written to metrics.json "
+             "(e.g. 'v2-experiment').  Defaults to the algorithm class's own "
+             "'version' attribute.",
+    )
+
+    parser.add_argument(
+        "--checkpoint-dir",
+        default=None,
+        metavar="DIR",
+        help=(
+            "Directory for model weight checkpoints used by the learning "
+            "algorithms (dqn, ppo).  When given, the latest checkpoint is "
+            "loaded at startup (skipping behavioural-cloning pre-training) "
+            "and updated after every run so training accumulates across "
+            "multiple invocations of python main.py.  "
+            "Checkpoint files are stored as "
+            "<checkpoint-dir>/<AlgorithmName>/checkpoint.npz."
+        ),
+    )
+
+    parser.add_argument(
+        "--train-games",
+        type=int,
+        default=None,
+        metavar="N",
+        help=(
+            "Run N games of fast in-process RL training (no browser) "
+            "using the Env / Train / Eval / Play pipeline.  "
+            "The algorithm trains 10–50× faster than the browser mode.  "
+            "After training the weights are saved to --checkpoint-dir "
+            "(if given) and the normal browser benchmark runs unless "
+            "--games 0 is also passed.  Only valid for learning algorithms "
+            "(dqn, ppo)."
+        ),
+    )
+    parser.add_argument(
+        "--eval-freq",
+        type=int,
+        default=50,
+        metavar="N",
+        help=(
+            "Run an EvalCallback evaluation every N training games during "
+            "--train-games mode (default: 50).  The best-scoring checkpoint "
+            "is saved to <checkpoint-dir>/best_checkpoint.npz."
+        ),
+    )
+    parser.add_argument(
+        "--n-eval-games",
+        type=int,
+        default=20,
+        metavar="N",
+        help=(
+            "Number of in-process evaluation games per EvalCallback round "
+            "during --train-games mode (default: 20)."
+        ),
+    )
+    parser.add_argument(
+        "--tensorboard-dir",
+        default=None,
+        metavar="DIR",
+        help=(
+            "Directory for TensorBoard event files and training_log.csv.  "
+            "Requires the tensorboard package (pip install tensorboard) for "
+            "the .tfevents format; CSV is always written regardless.  "
+            "Visualise with: tensorboard --logdir <DIR>"
+        ),
+    )
 
     argcomplete.autocomplete(parser)
     args = parser.parse_args(argv)
@@ -384,7 +633,81 @@ def main(argv: list[str] | None = None) -> None:
         args = parse_args(web_argv)
 
     algo_cls = ALGORITHMS[args.algorithm]
-    algorithm = algo_cls()
+
+    # ------------------------------------------------------------------
+    # Resolve checkpoint path for learning algorithms (DQN-v3, PPO-v3).
+    # ------------------------------------------------------------------
+    ckpt_path: Path | None = None
+    if args.checkpoint_dir and getattr(algo_cls, "supports_checkpoint", False):
+        ckpt_dir = Path(args.checkpoint_dir) / algo_cls.name
+        ckpt_dir.mkdir(parents=True, exist_ok=True)
+        ckpt_path = ckpt_dir / "checkpoint.npz"
+        if ckpt_path.exists():
+            print(f"  Checkpoint found → loading from {ckpt_path}")
+        else:
+            print(f"  No checkpoint found at {ckpt_path} — starting from scratch")
+
+    # Instantiate the algorithm, passing the checkpoint path if applicable.
+    if ckpt_path is not None:
+        algorithm = algo_cls(checkpoint_path=ckpt_path)
+    else:
+        algorithm = algo_cls()
+
+    # ------------------------------------------------------------------
+    # Fast in-process RL training (--train-games mode)
+    # ------------------------------------------------------------------
+    if args.train_games and getattr(algo_cls, "supports_checkpoint", False):
+        from src.rl_trainer import make_trainer
+
+        tb_dir = (
+            Path(args.tensorboard_dir) / algo_cls.name
+            if args.tensorboard_dir
+            else None
+        )
+        ckpt_dir_for_trainer = (
+            Path(args.checkpoint_dir) / algo_cls.name
+            if args.checkpoint_dir
+            else None
+        )
+
+        print(
+            f"\nFast in-process training: {args.train_games} game(s) with "
+            f"'{algorithm.name}'…"
+        )
+        if tb_dir:
+            print(f"  TensorBoard / CSV logs → {tb_dir}")
+        if ckpt_dir_for_trainer:
+            print(
+                f"  Checkpoint dir → {ckpt_dir_for_trainer}  "
+                f"(eval every {args.eval_freq} games, "
+                f"{args.n_eval_games} eval games)"
+            )
+        print()
+
+        trainer = make_trainer(
+            algorithm=algorithm,
+            checkpoint_dir=ckpt_dir_for_trainer,
+            tensorboard_dir=tb_dir,
+            eval_freq=args.eval_freq,
+            n_eval_games=args.n_eval_games,
+            verbose=True,
+        )
+        trainer.train(total_games=args.train_games)
+
+        # Reload the algorithm from the best checkpoint if it was saved.
+        if ckpt_dir_for_trainer is not None:
+            best_ckpt = ckpt_dir_for_trainer / "best_checkpoint.npz"
+            if best_ckpt.exists() and hasattr(algorithm, "load_checkpoint"):
+                print(f"\n  Loading best checkpoint → {best_ckpt}")
+                algorithm.load_checkpoint(best_ckpt)
+
+    # If --games 0 was explicitly requested, skip the browser benchmark.
+    if args.games == 0:
+        return
+
+    # Migrate any pre-versioning result directories (e.g. MCTS/ → MCTS-v1/) so
+    # the HTML report always shows clean, versioned algorithm names.
+    migrate_legacy_result_dirs(args.output)
 
     algo_dir = build_output_dir(args.output, algorithm.name)
     algo_dir.mkdir(parents=True, exist_ok=True)
@@ -425,16 +748,30 @@ def main(argv: list[str] | None = None) -> None:
 
         # Save run metadata
         ts_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        # --algo-version overrides the class-level version; fall back to the
+        # algorithm's own 'version' attribute (or "v1" for legacy classes).
+        effective_version = (
+            args.algo_version.strip()
+            if args.algo_version and args.algo_version.strip()
+            else getattr(algorithm, "version", "v1")
+        )
         meta_path = write_run_metadata(
             run_dir=run_dir,
             algorithm_name=algorithm.name,
-            algorithm_version=getattr(algorithm, "version", "v1"),
+            algorithm_version=effective_version,
             n_games=args.games,
             n_workers=n_workers,
             timestamp=ts_iso,
             mode=args.mode,
         )
         print(f"Metadata saved → {meta_path}")
+
+        # ------------------------------------------------------------------
+        # Save model checkpoint after each run (learning algorithms only)
+        # ------------------------------------------------------------------
+        if ckpt_path is not None and hasattr(algorithm, "save_checkpoint"):
+            algorithm.save_checkpoint(ckpt_path)
+            print(f"Checkpoint saved → {ckpt_path}")
 
         # ------------------------------------------------------------------
         # Prune old local results after each run to keep disk usage bounded

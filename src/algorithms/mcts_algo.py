@@ -121,44 +121,131 @@ class _MCTSNode:
         return max(self.children.values(), key=lambda n: n.visits)
 
 
-class MCTSAlgorithm(BaseAlgorithm):
-    """Monte Carlo Tree Search for 2048.
+class MCTSAlgorithmV1(BaseAlgorithm):
+    """Monte Carlo Tree Search – version 1 (random rollout simulation).
 
-    Builds a search tree rooted at the current board state.  Each iteration
-    of the algorithm performs four steps:
-
-    1. **Selection** – traverse the tree from the root using the UCB1 formula
-       until an unexpanded or terminal node is reached.
-    2. **Expansion** – add one previously unseen move as a new child, spawning
-       a random tile to produce the child's board state.
-    3. **Simulation** – play random moves from the new child for up to
-       *sim_depth* steps, accumulating the merge score.
-    4. **Backpropagation** – propagate the simulation score back up to the
-       root, updating visit counts and total scores along the way.
-
-    After *n_iterations* iterations the move leading to the most-visited root
-    child is returned.
+    Uses *random* move selection during rollout (simulation phase).  Compare
+    with :class:`MCTSAlgorithmV2` which uses greedy (highest-score) rollouts.
 
     Parameters
     ----------
     n_iterations:
-        Number of MCTS iterations (tree expansions) per move.  Higher values
-        improve move quality but increase latency.
+        Number of MCTS iterations per move (default 200).
     sim_depth:
-        Maximum number of random moves in each rollout simulation.
+        Maximum number of random moves per rollout (default 20).
     exploration:
-        UCB1 exploration constant *C*.  Higher values encourage broader
-        exploration; lower values favour exploitation of known good moves.
+        UCB1 exploration constant *C*.
     seed:
         Optional RNG seed for reproducibility.
     """
 
-    name = "MCTS"
+    name = "MCTS-v1"
+    version = "v1"
 
     def __init__(
         self,
         n_iterations: int = 200,
         sim_depth: int = 20,
+        exploration: float = math.sqrt(2),
+        seed: int | None = None,
+    ) -> None:
+        self._n_iterations = n_iterations
+        self._sim_depth = sim_depth
+        self._exploration = exploration
+        self._rng = random.Random(seed)
+
+    def choose_move(self, board: List[List[int]]) -> str:
+        """Run MCTS and return the best direction found."""
+        root = _MCTSNode(board)
+
+        for _ in range(self._n_iterations):
+            node = self._select(root)
+            if not node.is_terminal():
+                node = self._expand(node)
+            score = self._simulate(node.board)
+            self._backpropagate(node, score)
+
+        if not root.children:
+            return self._rng.choice(DIRECTIONS)
+
+        return root.most_visited_child().move  # type: ignore[return-value]
+
+    def _select(self, node: _MCTSNode) -> _MCTSNode:
+        """Traverse the tree to the most promising leaf using UCB1."""
+        while not node.is_terminal() and node.is_fully_expanded():
+            node = node.best_child(self._exploration)
+        return node
+
+    def _expand(self, node: _MCTSNode) -> _MCTSNode:
+        """Add one untried move as a child node and return it."""
+        untried = node.untried_moves()
+        move = self._rng.choice(untried)
+        untried.remove(move)
+        new_board, _ = simulate_move(node.board, move)
+        child_board = _spawn_tile(new_board, self._rng)
+        child = _MCTSNode(child_board, parent=node, move=move)
+        node.children[move] = child
+        return child
+
+    def _simulate(self, board: List[List[int]]) -> float:
+        """Play *random* moves from *board* for up to *sim_depth* steps.
+
+        Returns the total merge score accumulated during the rollout.
+        """
+        current = [row[:] for row in board]
+        total_score = 0.0
+
+        for _ in range(self._sim_depth):
+            directions = list(DIRECTIONS)
+            self._rng.shuffle(directions)
+            moved = False
+            for d in directions:
+                new_board, score = simulate_move(current, d)
+                if not _boards_equal(current, new_board):
+                    current = _spawn_tile(new_board, self._rng)
+                    total_score += score
+                    moved = True
+                    break
+            if not moved:
+                break
+
+        return total_score
+
+    def _backpropagate(self, node: _MCTSNode, score: float) -> None:
+        """Propagate *score* from *node* up to the root."""
+        current: _MCTSNode | None = node
+        while current is not None:
+            current.visits += 1
+            current.total_score += score
+            current = current.parent
+
+
+class MCTSAlgorithmV2(BaseAlgorithm):
+    """Monte Carlo Tree Search – version 2 (greedy heuristic simulation).
+
+    Improvement over :class:`MCTSAlgorithmV1`: uses greedy move selection
+    during rollouts (picking the move with the highest immediate merge score),
+    runs more iterations (400) and deeper simulations (40 steps).
+
+    Parameters
+    ----------
+    n_iterations:
+        Number of MCTS iterations per move (default 400).
+    sim_depth:
+        Maximum simulation depth in steps (default 40).
+    exploration:
+        UCB1 exploration constant *C*.
+    seed:
+        Optional RNG seed for reproducibility.
+    """
+
+    name = "MCTS-v2"
+    version = "v2"
+
+    def __init__(
+        self,
+        n_iterations: int = 400,
+        sim_depth: int = 40,
         exploration: float = math.sqrt(2),
         seed: int | None = None,
     ) -> None:
@@ -212,27 +299,36 @@ class MCTSAlgorithm(BaseAlgorithm):
         return child
 
     def _simulate(self, board: List[List[int]]) -> float:
-        """Play random moves from *board* for up to *sim_depth* steps.
+        """Heuristic-guided rollout from *board* for up to *sim_depth* steps.
 
-        Returns the total merge score accumulated during the rollout.
+        At each step the algorithm evaluates all valid moves and picks the one
+        with the highest immediate merge score (greedy exploitation).  Any valid
+        move qualifies even if its merge score is zero (no merges), ensuring the
+        rollout continues as long as moves exist.  Returns the total merge score
+        accumulated during the rollout.
         """
         current = [row[:] for row in board]
         total_score = 0.0
 
         for _ in range(self._sim_depth):
-            # Try directions in a random order; use the first valid one.
+            # Evaluate all valid moves; pick the one with the highest merge score.
             directions = list(DIRECTIONS)
             self._rng.shuffle(directions)
-            moved = False
+
+            best_board: list[list[int]] | None = None
+            best_score: float = -1.0
+
             for d in directions:
                 new_board, score = simulate_move(current, d)
-                if not _boards_equal(current, new_board):
-                    current = _spawn_tile(new_board, self._rng)
-                    total_score += score
-                    moved = True
-                    break
-            if not moved:
-                break  # game over
+                if not _boards_equal(current, new_board) and score > best_score:
+                    best_score = score
+                    best_board = new_board
+
+            if best_board is None:
+                break  # no valid move — game over
+
+            current = _spawn_tile(best_board, self._rng)
+            total_score += best_score
 
         return total_score
 
@@ -243,3 +339,11 @@ class MCTSAlgorithm(BaseAlgorithm):
             current.visits += 1
             current.total_score += score
             current = current.parent
+
+
+# ---------------------------------------------------------------------------
+# Backward-compatible alias — MCTSAlgorithm always points to the latest version.
+# ---------------------------------------------------------------------------
+
+MCTSAlgorithm = MCTSAlgorithmV2
+

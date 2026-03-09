@@ -30,7 +30,12 @@ _STYLE = Style(
 _console = Console()
 
 # These mirror the constants in main.py to avoid a circular import.
-_ALGORITHMS = ["random", "greedy", "heuristic", "expectimax", "mcts", "dqn", "ppo"]
+_ALGORITHMS = [
+    "random", "greedy", "heuristic", "expectimax",
+    "mcts-v1", "mcts-v2", "mcts",
+    "dqn-v1", "dqn-v2", "dqn-v3", "dqn",
+    "ppo-v1", "ppo-v2", "ppo-v3", "ppo",
+]
 _DEFAULT_KEEP = 10
 _DEFAULT_GAMES = 20
 _DEFAULT_RUNS = 1
@@ -82,6 +87,15 @@ def run_tui() -> list[str]:
         style=_STYLE,
     ).ask()
     if algorithm is None:
+        raise SystemExit(0)
+
+    # ── Version tag ───────────────────────────────────────────────────────────
+    version_tag = questionary.text(
+        "Version tag (leave blank to use the algorithm's default):",
+        default="",
+        style=_STYLE,
+    ).ask()
+    if version_tag is None:
         raise SystemExit(0)
 
     # ── Run mode ──────────────────────────────────────────────────────────────
@@ -152,6 +166,52 @@ def run_tui() -> list[str]:
     if output is None:
         raise SystemExit(0)
 
+    # ── RL Training (learning algorithms only) ────────────────────────────────
+    _is_rl = algorithm.startswith("dqn") or algorithm.startswith("ppo")
+    train_games_str = "0"
+    eval_freq_str = "50"
+    n_eval_games_str = "20"
+    tensorboard_dir = ""
+    if _is_rl:
+        _console.print(
+            "\n[dim]── RL Training (DQN / PPO only) ──[/]\n",
+        )
+        train_games_str = questionary.text(
+            "Fast training games — in-process, no browser (0 = skip):",
+            default="0",
+            validate=_non_neg_int,
+            style=_STYLE,
+        ).ask()
+        if train_games_str is None:
+            raise SystemExit(0)
+
+        if int(train_games_str) > 0:
+            eval_freq_str = questionary.text(
+                "Eval frequency — run EvalCallback every N games:",
+                default="50",
+                validate=_pos_int,
+                style=_STYLE,
+            ).ask()
+            if eval_freq_str is None:
+                raise SystemExit(0)
+
+            n_eval_games_str = questionary.text(
+                "Eval games per round:",
+                default="20",
+                validate=_pos_int,
+                style=_STYLE,
+            ).ask()
+            if n_eval_games_str is None:
+                raise SystemExit(0)
+
+            tensorboard_dir = questionary.text(
+                "TensorBoard / CSV log directory (leave blank to disable):",
+                default="",
+                style=_STYLE,
+            ).ask()
+            if tensorboard_dir is None:
+                raise SystemExit(0)
+
     # ── Misc options ──────────────────────────────────────────────────────────
     show = questionary.confirm(
         "Show browser window while playing?",
@@ -178,42 +238,6 @@ def run_tui() -> list[str]:
     if report is None:
         raise SystemExit(0)
 
-    # ── S3 options ────────────────────────────────────────────────────────────
-    use_s3 = questionary.confirm(
-        "Upload results to S3?",
-        default=False,
-        style=_STYLE,
-    ).ask()
-    if use_s3 is None:
-        raise SystemExit(0)
-
-    s3_bucket = s3_prefix = None
-    s3_public = False
-    if use_s3:
-        s3_bucket = questionary.text(
-            "S3 bucket name:",
-            validate=lambda v: bool(v.strip()) or "Bucket name cannot be empty.",
-            style=_STYLE,
-        ).ask()
-        if s3_bucket is None:
-            raise SystemExit(0)
-
-        s3_prefix = questionary.text(
-            "S3 key prefix:",
-            default="results",
-            style=_STYLE,
-        ).ask()
-        if s3_prefix is None:
-            raise SystemExit(0)
-
-        s3_public = questionary.confirm(
-            "Apply public-read ACL to uploaded objects?",
-            default=False,
-            style=_STYLE,
-        ).ask()
-        if s3_public is None:
-            raise SystemExit(0)
-
     # ── Summary table ─────────────────────────────────────────────────────────
     _console.print()
     table = Table(
@@ -226,6 +250,7 @@ def run_tui() -> list[str]:
     table.add_column("Value", style="bold")
 
     table.add_row("Algorithm", algorithm)
+    table.add_row("Version tag", version_tag.strip() if version_tag.strip() else "(default)")
     if mode_choice == "custom":
         table.add_row("Games / run", games)
         table.add_row("Runs", runs)
@@ -237,15 +262,17 @@ def run_tui() -> list[str]:
             f"{mode_choice}  ({p['games']} games × {p['runs']} run(s), auto parallel)",
         )
     table.add_row("Output dir", output + "/")
+    if _is_rl and int(train_games_str) > 0:
+        table.add_row("Train games", train_games_str)
+        table.add_row("Eval freq", eval_freq_str)
+        table.add_row("Eval games", n_eval_games_str)
+        table.add_row(
+            "TensorBoard dir",
+            tensorboard_dir.strip() + "/" if tensorboard_dir.strip() else "–",
+        )
     table.add_row("Show browser", "yes" if show else "no")
     table.add_row("Keep N runs", keep_str)
     table.add_row("HTML report", "yes" if report else "no")
-    table.add_row(
-        "S3 bucket",
-        f"{s3_bucket}  (prefix: {s3_prefix}{'  public-read' if s3_public else ''})"
-        if s3_bucket
-        else "–",
-    )
 
     _console.print(table)
     _console.print()
@@ -262,6 +289,16 @@ def run_tui() -> list[str]:
         "--keep", keep_str,
     ]
 
+    if version_tag.strip():
+        argv += ["--algo-version", version_tag.strip()]
+
+    if _is_rl and int(train_games_str) > 0:
+        argv += ["--train-games", train_games_str]
+        argv += ["--eval-freq", eval_freq_str]
+        argv += ["--n-eval-games", n_eval_games_str]
+        if tensorboard_dir.strip():
+            argv += ["--tensorboard-dir", tensorboard_dir.strip()]
+
     if mode_choice != "custom":
         argv += ["--mode", mode_choice]
     else:
@@ -275,9 +312,5 @@ def run_tui() -> list[str]:
         argv.append("--show")
     if report:
         argv.append("--report")
-    if use_s3 and s3_bucket:
-        argv += ["--s3-bucket", s3_bucket, "--s3-prefix", str(s3_prefix)]
-        if s3_public:
-            argv.append("--s3-public")
 
     return argv

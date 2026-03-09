@@ -10,7 +10,18 @@ import pytest
 from playwright.sync_api import sync_playwright
 
 from main import build_output_dir
-from src.algorithms.dqn_algo import DQNAlgorithm, _encode_board, _board_heuristic, _QNetwork
+from src.algorithms.dqn_algo import (
+    DQNAlgorithm,
+    DQNAlgorithmV3,
+    _encode_board,
+    _encode_board_onehot,
+    _score_reward,
+    _board_heuristic,
+    _QNetwork,
+    _Adam as _DQNAdam,
+    _spawn_tile_np as _dqn_spawn_tile_np,
+    _init_board_np as _dqn_init_board_np,
+)
 from src.algorithms.expectimax_algo import ExpectimaxAlgorithm, _expectimax, _get_empty_cells
 from src.algorithms.greedy_algo import GreedyAlgorithm, simulate_move, _slide_row_left, _boards_equal
 from src.algorithms.heuristic_algo import (
@@ -22,7 +33,12 @@ from src.algorithms.heuristic_algo import (
     _score_board,
 )
 from src.algorithms.mcts_algo import MCTSAlgorithm, _MCTSNode, _spawn_tile
-from src.algorithms.ppo_algo import PPOAlgorithm
+from src.algorithms.ppo_algo import (
+    PPOAlgorithm,
+    PPOAlgorithmV3,
+    _spawn_tile_np as _ppo_spawn_tile_np,
+    _init_board_np as _ppo_init_board_np,
+)
 from src.algorithms.random_algo import RandomAlgorithm
 from src.game import Game2048, DIRECTIONS
 
@@ -617,7 +633,7 @@ class TestMCTSNode:
 
 class TestMCTSAlgorithm:
     def test_algorithm_name(self):
-        assert MCTSAlgorithm.name == "MCTS"
+        assert MCTSAlgorithm.name == "MCTS-v2"
 
     def test_choose_move_returns_valid_direction(self):
         algo = MCTSAlgorithm(n_iterations=20, seed=0)
@@ -731,7 +747,7 @@ class TestQNetwork:
 
 class TestDQNAlgorithm:
     def test_algorithm_name(self):
-        assert DQNAlgorithm.name == "DQN"
+        assert DQNAlgorithm.name == "DQN-v2"
 
     def test_choose_move_returns_valid_direction(self):
         algo = DQNAlgorithm(seed=0)
@@ -802,7 +818,7 @@ class TestDQNAlgorithm:
 
 class TestPPOAlgorithm:
     def test_algorithm_name(self):
-        assert PPOAlgorithm.name == "PPO"
+        assert PPOAlgorithm.name == "PPO-v2"
 
     def test_choose_move_returns_valid_direction(self):
         algo = PPOAlgorithm(seed=0)
@@ -864,3 +880,719 @@ class TestPPOAlgorithm:
 
         assert game.get_score() >= 0
         assert game.get_max_tile() >= 2
+
+
+# ---------------------------------------------------------------------------
+# V3 helpers: one-hot encoding, score-based reward, Adam optimizer
+# ---------------------------------------------------------------------------
+
+
+class TestEncodeOnehot:
+    def test_shape_is_256(self):
+        board = [[0] * 4 for _ in range(4)]
+        enc = _encode_board_onehot(board)
+        assert enc.shape == (256,)
+
+    def test_empty_board_has_one_hot_at_level_zero(self):
+        board = [[0] * 4 for _ in range(4)]
+        enc = _encode_board_onehot(board)
+        # For each cell, level-0 bit must be 1 and all other bits (1-15) 0.
+        for cell in range(16):
+            assert enc[cell * 16 + 0] == 1.0
+            assert enc[cell * 16 + 1:(cell + 1) * 16].sum() == 0.0
+
+    def test_tile_2_sets_level_one(self):
+        board = [[2, 0, 0, 0], [0] * 4, [0] * 4, [0] * 4]
+        enc = _encode_board_onehot(board)
+        assert enc[0 * 16 + 1] == 1.0   # cell 0, level 1 (tile 2)
+        assert enc[0 * 16 + 0] == 0.0
+
+    def test_tile_2048_sets_level_eleven(self):
+        board = [[2048, 0, 0, 0], [0] * 4, [0] * 4, [0] * 4]
+        enc = _encode_board_onehot(board)
+        # log2(2048) = 11 → level 11
+        assert enc[0 * 16 + 11] == 1.0
+
+    def test_each_cell_is_one_hot(self):
+        board = [[2, 4, 8, 16], [32, 64, 128, 256],
+                 [512, 1024, 2048, 4], [2, 2, 2, 2]]
+        enc = _encode_board_onehot(board)
+        for cell in range(16):
+            cell_vec = enc[cell * 16:(cell + 1) * 16]
+            assert cell_vec.sum() == 1.0, f"Cell {cell} is not one-hot"
+
+    def test_dtype_is_float32(self):
+        board = [[0] * 4 for _ in range(4)]
+        enc = _encode_board_onehot(board)
+        assert enc.dtype == np.float32
+
+    def test_large_tile_clamped_to_max_level(self):
+        """Tiles above 2^15 = 32768 should map to the highest level without error."""
+        board = [[65536, 0, 0, 0], [0] * 4, [0] * 4, [0] * 4]
+        enc = _encode_board_onehot(board)
+        assert enc[0 * 16 + 15] == 1.0
+
+
+class TestScoreReward:
+    def test_zero_reward_for_non_merging_move(self):
+        """A move that slides tiles without merging should have merge-score 0."""
+        # Only one tile in top-left; moving right slides it but doesn't merge.
+        board = [[2, 0, 0, 0], [0] * 4, [0] * 4, [0] * 4]
+        curr = [[0, 0, 0, 2], [0] * 4, [0] * 4, [0] * 4]  # simulated result
+        # action 3 = "right"
+        from src.game import DIRECTIONS
+        action = DIRECTIONS.index("right")
+        r = _score_reward(board, action, curr)
+        # merge score is 0, so reward = log2(1) + 0.1*empty_count
+        assert r == pytest.approx(math.log2(0 + 1) + 0.1 * 15, abs=1e-5)
+
+    def test_positive_reward_for_merge(self):
+        """Two 8s merging should produce a positive reward > 0."""
+        prev = [[8, 8, 0, 0], [0] * 4, [0] * 4, [0] * 4]
+        curr = [[16, 0, 0, 0], [0] * 4, [0] * 4, [0] * 4]  # after merge + 1 new tile
+        action = DIRECTIONS.index("left")
+        r = _score_reward(prev, action, curr)
+        assert r > 0.0
+
+    def test_higher_merge_gives_higher_reward(self):
+        """Merging 64+64 must reward more than merging 8+8."""
+        prev_small = [[8, 8, 0, 0], [0] * 4, [0] * 4, [0] * 4]
+        curr_small = [[16, 0, 0, 0], [0] * 4, [0] * 4, [0] * 4]
+        prev_large = [[64, 64, 0, 0], [0] * 4, [0] * 4, [0] * 4]
+        curr_large = [[128, 0, 0, 0], [0] * 4, [0] * 4, [0] * 4]
+        action = DIRECTIONS.index("left")
+        r_small = _score_reward(prev_small, action, curr_small)
+        r_large = _score_reward(prev_large, action, curr_large)
+        assert r_large > r_small
+
+    def test_reward_never_negative(self):
+        """Score-based reward must always be ≥ 0."""
+        boards = [
+            [[2, 4, 8, 16], [32, 64, 128, 256],
+             [512, 1024, 2048, 4], [2, 2, 2, 2]],
+            [[0] * 4 for _ in range(4)],
+            [[2, 2, 0, 0], [0] * 4, [0] * 4, [0] * 4],
+        ]
+        for prev in boards:
+            for act_idx, d in enumerate(DIRECTIONS):
+                new_board, _ = simulate_move(prev, d)
+                r = _score_reward(prev, act_idx, new_board)
+                assert r >= 0.0, f"Negative reward {r} for {d} on board {prev}"
+
+
+class TestAdamOptimizer:
+    def test_decreases_loss_after_update(self):
+        """Adam should reduce a simple quadratic loss."""
+        rng = np.random.default_rng(0)
+        param = rng.standard_normal(8).astype(np.float32)
+        target = np.zeros(8, dtype=np.float32)
+        adam = _DQNAdam(lr=0.01)
+        initial_loss = float(np.sum(param ** 2))
+        for _ in range(50):
+            grad = 2.0 * param  # gradient of MSE
+            adam.step([("p", param, grad)])
+        final_loss = float(np.sum(param ** 2))
+        assert final_loss < initial_loss
+
+    def test_step_counter_increments(self):
+        adam = _DQNAdam(lr=0.01)
+        param = np.ones(4, dtype=np.float32)
+        adam.step([("p", param, np.ones(4, dtype=np.float32))])
+        assert adam._t == 1
+        adam.step([("p", param, np.ones(4, dtype=np.float32))])
+        assert adam._t == 2
+
+    def test_independent_named_params(self):
+        """Different parameter names must have independent moment estimates."""
+        adam = _DQNAdam(lr=0.01)
+        p1 = np.array([1.0, 2.0], dtype=np.float32)
+        p2 = np.array([3.0, 4.0], dtype=np.float32)
+        g1 = np.array([0.1, 0.2], dtype=np.float32)
+        g2 = np.array([0.3, 0.4], dtype=np.float32)
+        adam.step([("p1", p1, g1), ("p2", p2, g2)])
+        assert not np.allclose(adam._m["p1"], adam._m["p2"])
+
+
+# ---------------------------------------------------------------------------
+# DQNAlgorithmV3
+# ---------------------------------------------------------------------------
+
+
+class TestDQNAlgorithmV3:
+    def test_algorithm_name(self):
+        assert DQNAlgorithmV3.name == "DQN-v3"
+
+    def test_version(self):
+        assert DQNAlgorithmV3.version == "v3"
+
+    def test_choose_move_returns_valid_direction(self):
+        algo = DQNAlgorithmV3(seed=0)
+        board = [[2, 0, 0, 0], [4, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]]
+        assert algo.choose_move(board) in DIRECTIONS
+
+    def test_choose_move_restricted_to_valid_moves(self):
+        algo = DQNAlgorithmV3(epsilon_start=0.0, epsilon_end=0.0, seed=0)
+        board = [[2, 0, 0, 0], [0] * 4, [0] * 4, [0] * 4]
+        for _ in range(10):
+            move = algo.choose_move(board)
+            new_board, _ = simulate_move(board, move)
+            assert not _boards_equal(board, new_board), f"Chose invalid move {move!r}"
+
+    def test_falls_back_on_fully_blocked_board(self):
+        algo = DQNAlgorithmV3(seed=0)
+        board = [
+            [2, 4, 2, 4],
+            [4, 2, 4, 2],
+            [2, 4, 2, 4],
+            [4, 2, 4, 2],
+        ]
+        assert algo.choose_move(board) in DIRECTIONS
+
+    def test_trains_after_enough_transitions(self):
+        algo = DQNAlgorithmV3(batch_size=4, buffer_size=20, train_freq=1, seed=0)
+        board = [[2, 4, 0, 0], [0] * 4, [0] * 4, [0] * 4]
+        for _ in range(20):
+            algo.choose_move(board)
+
+    def test_epsilon_decays_over_time(self):
+        algo = DQNAlgorithmV3(epsilon_start=1.0, epsilon_end=0.0,
+                              epsilon_decay=0.9, seed=0)
+        board = [[2, 0, 0, 0], [0] * 4, [0] * 4, [0] * 4]
+        initial = algo._epsilon
+        for _ in range(10):
+            algo.choose_move(board)
+        assert algo._epsilon < initial
+
+    def test_on_game_start_resets_prev_state(self):
+        algo = DQNAlgorithmV3(seed=0)
+        board = [[2, 0, 0, 0], [0] * 4, [0] * 4, [0] * 4]
+        algo.choose_move(board)
+        assert algo._prev_state is not None
+        algo.on_game_start()
+        assert algo._prev_state is None
+        assert algo._prev_action is None
+        assert algo._prev_board is None
+
+    def test_on_game_start_prevents_cross_game_transition(self):
+        """After on_game_start, the first choose_move must not store a transition."""
+        algo = DQNAlgorithmV3(batch_size=4, buffer_size=100, seed=0)
+        board = [[2, 0, 0, 0], [0] * 4, [0] * 4, [0] * 4]
+        algo.choose_move(board)
+        algo.on_game_start()
+        buf_before = len(algo._buffer)
+        algo.choose_move(board)
+        # The first call after reset must not add a new transition (no prev state).
+        assert len(algo._buffer) == buf_before
+
+    def test_full_game_runs_to_completion(self, game):
+        algo = DQNAlgorithmV3(seed=0)
+        game.new_game()
+        moves = 0
+        while not game.is_game_over():
+            board = game.get_board()
+            direction = algo.choose_move(board)
+            game.make_move(direction)
+            moves += 1
+            assert moves < 10_000
+        assert game.get_score() >= 0
+        assert game.get_max_tile() >= 2
+
+
+# ---------------------------------------------------------------------------
+# PPOAlgorithmV3
+# ---------------------------------------------------------------------------
+
+
+class TestPPOAlgorithmV3:
+    def test_algorithm_name(self):
+        assert PPOAlgorithmV3.name == "PPO-v3"
+
+    def test_version(self):
+        assert PPOAlgorithmV3.version == "v3"
+
+    def test_choose_move_returns_valid_direction(self):
+        algo = PPOAlgorithmV3(seed=0)
+        board = [[2, 0, 0, 0], [4, 0, 0, 0], [0] * 4, [0] * 4]
+        assert algo.choose_move(board) in DIRECTIONS
+
+    def test_falls_back_on_fully_blocked_board(self):
+        algo = PPOAlgorithmV3(seed=0)
+        board = [
+            [2, 4, 2, 4],
+            [4, 2, 4, 2],
+            [2, 4, 2, 4],
+            [4, 2, 4, 2],
+        ]
+        assert algo.choose_move(board) in DIRECTIONS
+
+    def test_ppo_update_triggered_after_update_freq_steps(self):
+        algo = PPOAlgorithmV3(update_freq=4, n_epochs=2, seed=0)
+        board = [[2, 4, 0, 0], [0] * 4, [0] * 4, [0] * 4]
+        for _ in range(10):
+            algo.choose_move(board)
+
+    def test_rollout_buffer_cleared_after_update(self):
+        algo = PPOAlgorithmV3(update_freq=4, seed=0)
+        board = [[2, 4, 0, 0], [0] * 4, [0] * 4, [0] * 4]
+        for _ in range(5):
+            algo.choose_move(board)
+        assert len(algo._buf_states) <= 1
+
+    def test_on_game_start_resets_all_state(self):
+        algo = PPOAlgorithmV3(seed=0)
+        board = [[2, 0, 0, 0], [0] * 4, [0] * 4, [0] * 4]
+        for _ in range(5):
+            algo.choose_move(board)
+        algo.on_game_start()
+        assert algo._prev_state is None
+        assert algo._prev_action is None
+        assert algo._prev_board is None
+        assert len(algo._buf_states) == 0
+        assert len(algo._buf_rewards) == 0
+
+    def test_on_game_start_prevents_cross_game_transition(self):
+        """After on_game_start, the first choose_move must not add to the buffer."""
+        algo = PPOAlgorithmV3(seed=0)
+        board = [[2, 0, 0, 0], [0] * 4, [0] * 4, [0] * 4]
+        algo.choose_move(board)
+        algo.on_game_start()
+        buf_before = len(algo._buf_states)
+        algo.choose_move(board)
+        assert len(algo._buf_states) == buf_before
+
+    def test_full_game_runs_to_completion(self, game):
+        algo = PPOAlgorithmV3(seed=0)
+        game.new_game()
+        moves = 0
+        while not game.is_game_over():
+            board = game.get_board()
+            direction = algo.choose_move(board)
+            game.make_move(direction)
+            moves += 1
+            assert moves < 10_000
+        assert game.get_score() >= 0
+        assert game.get_max_tile() >= 2
+
+
+# ---------------------------------------------------------------------------
+# BC simulation helpers: _spawn_tile_np, _init_board_np
+# ---------------------------------------------------------------------------
+
+
+class TestSpawnTileNp:
+    def test_adds_one_tile(self):
+        rng = np.random.default_rng(0)
+        board = [[0] * 4 for _ in range(4)]
+        new = _dqn_spawn_tile_np(board, rng)
+        non_zero = sum(new[r][c] != 0 for r in range(4) for c in range(4))
+        assert non_zero == 1
+
+    def test_tile_value_is_2_or_4(self):
+        rng = np.random.default_rng(0)
+        board = [[0] * 4 for _ in range(4)]
+        values = set()
+        for _ in range(50):
+            new = _dqn_spawn_tile_np(board, rng)
+            for r in range(4):
+                for c in range(4):
+                    if new[r][c] != 0:
+                        values.add(new[r][c])
+        assert values <= {2, 4}
+
+    def test_full_board_returned_unchanged(self):
+        rng = np.random.default_rng(0)
+        board = [[2] * 4 for _ in range(4)]
+        new = _dqn_spawn_tile_np(board, rng)
+        assert all(new[r][c] == 2 for r in range(4) for c in range(4))
+
+    def test_does_not_mutate_original(self):
+        rng = np.random.default_rng(0)
+        board = [[0] * 4 for _ in range(4)]
+        _dqn_spawn_tile_np(board, rng)
+        assert all(board[r][c] == 0 for r in range(4) for c in range(4))
+
+    def test_ppo_version_matches_dqn_version(self):
+        """Both modules must provide identical tile-spawn behaviour."""
+        rng1 = np.random.default_rng(7)
+        rng2 = np.random.default_rng(7)
+        board = [[0] * 4 for _ in range(4)]
+        b1 = _dqn_spawn_tile_np(board, rng1)
+        b2 = _ppo_spawn_tile_np(board, rng2)
+        assert all(b1[r][c] == b2[r][c] for r in range(4) for c in range(4))
+
+
+class TestInitBoardNp:
+    def test_has_exactly_two_tiles(self):
+        rng = np.random.default_rng(0)
+        board = _dqn_init_board_np(rng)
+        non_zero = sum(board[r][c] != 0 for r in range(4) for c in range(4))
+        assert non_zero == 2
+
+    def test_all_tiles_are_2_or_4(self):
+        rng = np.random.default_rng(0)
+        for _ in range(10):
+            board = _dqn_init_board_np(rng)
+            for r in range(4):
+                for c in range(4):
+                    if board[r][c] != 0:
+                        assert board[r][c] in (2, 4)
+
+    def test_ppo_version_produces_same_shape(self):
+        rng = np.random.default_rng(0)
+        board = _ppo_init_board_np(rng)
+        assert len(board) == 4
+        assert all(len(row) == 4 for row in board)
+
+
+# ---------------------------------------------------------------------------
+# Behavioural-cloning pre-training
+# ---------------------------------------------------------------------------
+
+
+class TestDQNBehaviouralCloning:
+    def test_bc_improves_action_alignment_with_heuristic(self):
+        """After BC pre-training, DQN actions should agree with the Heuristic more often."""
+        rng = np.random.default_rng(42)
+        # Build a representative set of boards from simulated heuristic games.
+        test_boards = []
+        for _ in range(20):
+            board = _dqn_init_board_np(rng)
+            for _ in range(30):
+                from src.algorithms.greedy_algo import simulate_move, _boards_equal
+                best_dir = None
+                best_s = float("-inf")
+                for d in DIRECTIONS:
+                    nb, _ = simulate_move(board, d)
+                    if not _boards_equal(board, nb):
+                        s = _score_board(nb)
+                        if s > best_s:
+                            best_s = s
+                            best_dir = d
+                if best_dir is None:
+                    break
+                test_boards.append([row[:] for row in board])
+                board, _ = simulate_move(board, best_dir)
+                board = _dqn_spawn_tile_np(board, rng)
+
+        if not test_boards:
+            pytest.skip("No test boards generated")
+
+        def heuristic_action(b):
+            best_dir = None
+            best_s = float("-inf")
+            for d in DIRECTIONS:
+                from src.algorithms.greedy_algo import simulate_move, _boards_equal
+                nb, _ = simulate_move(b, d)
+                if not _boards_equal(b, nb):
+                    s = _score_board(nb)
+                    if s > best_s:
+                        best_s = s
+                        best_dir = d
+            return DIRECTIONS.index(best_dir) if best_dir else 0
+
+        # Untrained agent (ε=0 so it always uses the network)
+        no_bc = DQNAlgorithmV3(epsilon_start=0.0, epsilon_end=0.0,
+                               n_pretrain_games=0, seed=1)
+        # BC-pre-trained agent
+        bc = DQNAlgorithmV3(epsilon_start=0.0, epsilon_end=0.0,
+                            n_pretrain_games=10, seed=1)
+
+        def count_agreement(algo):
+            agree = 0
+            for b in test_boards:
+                move = algo.choose_move(b)
+                if DIRECTIONS.index(move) == heuristic_action(b):
+                    agree += 1
+            return agree
+
+        agree_no_bc = count_agreement(no_bc)
+        agree_bc = count_agreement(bc)
+        assert agree_bc >= agree_no_bc, (
+            f"BC agent agreed with heuristic {agree_bc}/{len(test_boards)} times, "
+            f"but untrained agent agreed {agree_no_bc}/{len(test_boards)} times"
+        )
+
+    def test_bc_disabled_with_zero_games(self):
+        """n_pretrain_games=0 must skip BC and not raise."""
+        algo = DQNAlgorithmV3(n_pretrain_games=0, seed=0)
+        board = [[2, 0, 0, 0], [0] * 4, [0] * 4, [0] * 4]
+        assert algo.choose_move(board) in DIRECTIONS
+
+    def test_bc_with_small_game_count_does_not_raise(self):
+        algo = DQNAlgorithmV3(n_pretrain_games=5, seed=0)
+        board = [[2, 4, 0, 0], [0] * 4, [0] * 4, [0] * 4]
+        assert algo.choose_move(board) in DIRECTIONS
+
+    def test_epsilon_reduced_after_bc(self):
+        """After BC pre-training ε must be ≤ 0.3."""
+        algo = DQNAlgorithmV3(epsilon_start=1.0, n_pretrain_games=10, seed=0)
+        assert algo._epsilon <= 0.3
+
+    def test_target_net_synced_after_bc(self):
+        """After BC the target network weights must match the Q-network."""
+        algo = DQNAlgorithmV3(n_pretrain_games=10, seed=0)
+        assert np.allclose(algo._q_net.W1, algo._target_net.W1)
+        assert np.allclose(algo._q_net.W2, algo._target_net.W2)
+
+
+class TestPPOBehaviouralCloning:
+    def test_bc_improves_action_alignment_with_heuristic(self):
+        """After BC pre-training, PPO actions should agree with the Heuristic more often."""
+        rng = np.random.default_rng(42)
+        test_boards = []
+        for _ in range(20):
+            board = _ppo_init_board_np(rng)
+            for _ in range(30):
+                from src.algorithms.greedy_algo import simulate_move, _boards_equal
+                best_dir = None
+                best_s = float("-inf")
+                for d in DIRECTIONS:
+                    nb, _ = simulate_move(board, d)
+                    if not _boards_equal(board, nb):
+                        s = _score_board(nb)
+                        if s > best_s:
+                            best_s = s
+                            best_dir = d
+                if best_dir is None:
+                    break
+                test_boards.append([row[:] for row in board])
+                board, _ = simulate_move(board, best_dir)
+                board = _ppo_spawn_tile_np(board, rng)
+
+        if not test_boards:
+            pytest.skip("No test boards generated")
+
+        def heuristic_action(b):
+            best_dir = None
+            best_s = float("-inf")
+            for d in DIRECTIONS:
+                from src.algorithms.greedy_algo import simulate_move, _boards_equal
+                nb, _ = simulate_move(b, d)
+                if not _boards_equal(b, nb):
+                    s = _score_board(nb)
+                    if s > best_s:
+                        best_s = s
+                        best_dir = d
+            return DIRECTIONS.index(best_dir) if best_dir else 0
+
+        # PPO samples stochastically; use many calls and pick the modal action.
+        def modal_action(algo, b, n=30):
+            counts = [0] * 4
+            for _ in range(n):
+                m = algo.choose_move(b)
+                counts[DIRECTIONS.index(m)] += 1
+            return counts.index(max(counts))
+
+        no_bc = PPOAlgorithmV3(n_pretrain_games=0, seed=1)
+        bc = PPOAlgorithmV3(n_pretrain_games=10, seed=1)
+
+        agree_no_bc = sum(
+            modal_action(no_bc, b) == heuristic_action(b) for b in test_boards
+        )
+        agree_bc = sum(
+            modal_action(bc, b) == heuristic_action(b) for b in test_boards
+        )
+        assert agree_bc >= agree_no_bc, (
+            f"BC PPO agreed {agree_bc}/{len(test_boards)}, "
+            f"untrained agreed {agree_no_bc}/{len(test_boards)}"
+        )
+
+    def test_bc_disabled_with_zero_games(self):
+        algo = PPOAlgorithmV3(n_pretrain_games=0, seed=0)
+        board = [[2, 0, 0, 0], [0] * 4, [0] * 4, [0] * 4]
+        assert algo.choose_move(board) in DIRECTIONS
+
+    def test_bc_with_small_game_count_does_not_raise(self):
+        algo = PPOAlgorithmV3(n_pretrain_games=5, seed=0)
+        board = [[2, 4, 0, 0], [0] * 4, [0] * 4, [0] * 4]
+        assert algo.choose_move(board) in DIRECTIONS
+
+
+# ===========================================================================
+# Checkpoint save / load — DQNAlgorithmV3 and PPOAlgorithmV3
+# ===========================================================================
+
+class TestDQNAlgorithmV3Checkpoint:
+    """Tests for save_checkpoint / load_checkpoint on DQNAlgorithmV3."""
+
+    def test_save_creates_npz_file(self, tmp_path):
+        algo = DQNAlgorithmV3(n_pretrain_games=0, seed=0)
+        ckpt = tmp_path / "dqn.npz"
+        algo.save_checkpoint(ckpt)
+        assert ckpt.exists()
+
+    def test_npz_contains_expected_keys(self, tmp_path):
+        algo = DQNAlgorithmV3(n_pretrain_games=0, seed=0)
+        ckpt = tmp_path / "dqn.npz"
+        algo.save_checkpoint(ckpt)
+        d = np.load(ckpt)
+        for key in ("q_W1", "q_b1", "q_W2", "q_b2", "q_W3", "q_b3",
+                    "t_W1", "t_b1", "t_W2", "t_b2", "t_W3", "t_b3",
+                    "epsilon", "step", "adam_t"):
+            assert key in d.files, f"Missing key: {key}"
+
+    def test_load_restores_weights(self, tmp_path):
+        algo = DQNAlgorithmV3(n_pretrain_games=0, seed=0)
+        # Perform one training step so weights change from initialisation.
+        board = [[2, 4, 8, 16], [32, 64, 128, 256], [2, 4, 8, 16], [32, 64, 0, 0]]
+        for _ in range(20):
+            algo.choose_move(board)
+        ckpt = tmp_path / "dqn.npz"
+        algo.save_checkpoint(ckpt)
+        W1_before = algo._q_net.W1.copy()
+
+        # Create a fresh agent and load.
+        algo2 = DQNAlgorithmV3(n_pretrain_games=0, seed=99)
+        assert not np.array_equal(algo2._q_net.W1, W1_before), \
+            "Fresh agent should have different weights"
+        algo2.load_checkpoint(ckpt)
+        np.testing.assert_array_equal(algo2._q_net.W1, W1_before)
+
+    def test_load_restores_epsilon_and_step(self, tmp_path):
+        algo = DQNAlgorithmV3(n_pretrain_games=0, epsilon_start=0.5, seed=0)
+        board = [[2, 0, 0, 0], [0] * 4, [0] * 4, [0] * 4]
+        for _ in range(30):
+            algo.choose_move(board)
+        eps_before = algo._epsilon
+        step_before = algo._step
+        ckpt = tmp_path / "dqn.npz"
+        algo.save_checkpoint(ckpt)
+
+        algo2 = DQNAlgorithmV3(n_pretrain_games=0, seed=99)
+        algo2.load_checkpoint(ckpt)
+        assert abs(algo2._epsilon - eps_before) < 1e-6
+        assert algo2._step == step_before
+
+    def test_load_restores_adam_moments(self, tmp_path):
+        algo = DQNAlgorithmV3(
+            n_pretrain_games=0, batch_size=4, buffer_size=20,
+            train_freq=1, seed=0
+        )
+        board = [[2, 4, 8, 16], [32, 64, 128, 256], [2, 4, 8, 16], [32, 64, 0, 0]]
+        for _ in range(30):
+            algo.choose_move(board)
+        ckpt = tmp_path / "dqn.npz"
+        algo.save_checkpoint(ckpt)
+
+        algo2 = DQNAlgorithmV3(n_pretrain_games=0, seed=99)
+        algo2.load_checkpoint(ckpt)
+        assert algo2._optimizer._t == algo._optimizer._t
+        if algo._optimizer._m:
+            for k in algo._optimizer._m:
+                np.testing.assert_array_almost_equal(
+                    algo2._optimizer._m[k], algo._optimizer._m[k]
+                )
+
+    def test_checkpoint_path_in_constructor_loads_weights(self, tmp_path):
+        # Save a checkpoint from a trained agent.
+        algo = DQNAlgorithmV3(n_pretrain_games=0, seed=0)
+        board = [[2, 4, 8, 16], [32, 64, 128, 256], [2, 4, 8, 16], [32, 64, 0, 0]]
+        for _ in range(20):
+            algo.choose_move(board)
+        ckpt = tmp_path / "checkpoint.npz"
+        algo.save_checkpoint(ckpt)
+        W1_ref = algo._q_net.W1.copy()
+
+        # Construct a new agent with checkpoint_path — BC should be skipped
+        # and weights loaded from the file instead.
+        algo2 = DQNAlgorithmV3(n_pretrain_games=50, seed=99, checkpoint_path=ckpt)
+        np.testing.assert_array_equal(algo2._q_net.W1, W1_ref)
+
+    def test_constructor_skips_checkpoint_when_file_missing(self, tmp_path):
+        missing = tmp_path / "nonexistent.npz"
+        # Should not raise; BC pre-training fires normally.
+        algo = DQNAlgorithmV3(n_pretrain_games=0, seed=0, checkpoint_path=missing)
+        board = [[2, 0, 0, 0], [0] * 4, [0] * 4, [0] * 4]
+        assert algo.choose_move(board) in DIRECTIONS
+
+    def test_supports_checkpoint_class_attribute(self):
+        assert getattr(DQNAlgorithmV3, "supports_checkpoint", False) is True
+
+
+class TestPPOAlgorithmV3Checkpoint:
+    """Tests for save_checkpoint / load_checkpoint on PPOAlgorithmV3."""
+
+    def test_save_creates_npz_file(self, tmp_path):
+        algo = PPOAlgorithmV3(n_pretrain_games=0, seed=0)
+        ckpt = tmp_path / "ppo.npz"
+        algo.save_checkpoint(ckpt)
+        assert ckpt.exists()
+
+    def test_npz_contains_expected_keys(self, tmp_path):
+        algo = PPOAlgorithmV3(n_pretrain_games=0, seed=0)
+        ckpt = tmp_path / "ppo.npz"
+        algo.save_checkpoint(ckpt)
+        d = np.load(ckpt)
+        for key in ("W1", "b1", "W2", "b2", "W_a", "b_a", "W_v", "b_v", "adam_t"):
+            assert key in d.files, f"Missing key: {key}"
+
+    def test_load_restores_weights(self, tmp_path):
+        algo = PPOAlgorithmV3(n_pretrain_games=0, seed=0)
+        board = [[2, 4, 8, 16], [32, 64, 128, 256], [2, 4, 8, 16], [32, 64, 0, 0]]
+        for _ in range(20):
+            algo.choose_move(board)
+        ckpt = tmp_path / "ppo.npz"
+        algo.save_checkpoint(ckpt)
+        W1_before = algo._net.W1.copy()
+
+        algo2 = PPOAlgorithmV3(n_pretrain_games=0, seed=99)
+        assert not np.array_equal(algo2._net.W1, W1_before)
+        algo2.load_checkpoint(ckpt)
+        np.testing.assert_array_equal(algo2._net.W1, W1_before)
+
+    def test_load_restores_actor_and_critic_heads(self, tmp_path):
+        algo = PPOAlgorithmV3(
+            n_pretrain_games=0, update_freq=4, n_epochs=1, seed=0
+        )
+        board = [[2, 4, 8, 16], [32, 64, 128, 256], [2, 4, 8, 16], [32, 64, 0, 0]]
+        for _ in range(50):
+            algo.choose_move(board)
+        ckpt = tmp_path / "ppo.npz"
+        algo.save_checkpoint(ckpt)
+        W_a_before = algo._net.W_a.copy()
+        W_v_before = algo._net.W_v.copy()
+
+        algo2 = PPOAlgorithmV3(n_pretrain_games=0, seed=99)
+        algo2.load_checkpoint(ckpt)
+        np.testing.assert_array_equal(algo2._net.W_a, W_a_before)
+        np.testing.assert_array_equal(algo2._net.W_v, W_v_before)
+
+    def test_load_restores_adam_moments(self, tmp_path):
+        algo = PPOAlgorithmV3(
+            n_pretrain_games=0, update_freq=4, n_epochs=1, seed=0
+        )
+        board = [[2, 4, 8, 16], [32, 64, 128, 256], [2, 4, 8, 16], [32, 64, 0, 0]]
+        for _ in range(50):
+            algo.choose_move(board)
+        ckpt = tmp_path / "ppo.npz"
+        algo.save_checkpoint(ckpt)
+
+        algo2 = PPOAlgorithmV3(n_pretrain_games=0, seed=99)
+        algo2.load_checkpoint(ckpt)
+        assert algo2._optimizer._t == algo._optimizer._t
+        if algo._optimizer._m:
+            for k in algo._optimizer._m:
+                np.testing.assert_array_almost_equal(
+                    algo2._optimizer._m[k], algo._optimizer._m[k]
+                )
+
+    def test_checkpoint_path_in_constructor_loads_weights(self, tmp_path):
+        algo = PPOAlgorithmV3(n_pretrain_games=0, seed=0)
+        board = [[2, 4, 8, 16], [32, 64, 128, 256], [2, 4, 8, 16], [32, 64, 0, 0]]
+        for _ in range(20):
+            algo.choose_move(board)
+        ckpt = tmp_path / "checkpoint.npz"
+        algo.save_checkpoint(ckpt)
+        W1_ref = algo._net.W1.copy()
+
+        algo2 = PPOAlgorithmV3(n_pretrain_games=50, seed=99, checkpoint_path=ckpt)
+        np.testing.assert_array_equal(algo2._net.W1, W1_ref)
+
+    def test_constructor_skips_checkpoint_when_file_missing(self, tmp_path):
+        missing = tmp_path / "nonexistent.npz"
+        algo = PPOAlgorithmV3(n_pretrain_games=0, seed=0, checkpoint_path=missing)
+        board = [[2, 0, 0, 0], [0] * 4, [0] * 4, [0] * 4]
+        assert algo.choose_move(board) in DIRECTIONS
+
+    def test_supports_checkpoint_class_attribute(self):
+        assert getattr(PPOAlgorithmV3, "supports_checkpoint", False) is True

@@ -19,6 +19,15 @@ class BaseAlgorithm(ABC):
     #: Version string included in per-run metadata.
     version: str = "v1"
 
+    def on_game_start(self) -> None:
+        """Called by the runner at the start of each new game.
+
+        The default implementation is a no-op.  RL algorithms should override
+        this method to reset any per-game state (e.g. the previous-transition
+        cache) so that transitions from the end of one game are not incorrectly
+        mixed with the start of the next game.
+        """
+
     @abstractmethod
     def choose_move(self, board: List[List[int]]) -> str:
         """

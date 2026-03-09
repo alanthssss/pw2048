@@ -254,14 +254,16 @@ def _collect_leaderboard_data(algo_dirs: list[Path]) -> list[dict]:
 
         df_all = pd.concat(frames, ignore_index=True)
 
-        # Derive stage from the most-recent run's metrics.json
+        # Derive stage and latest algorithm_version from the most-recent run's metrics.json
         stage = "custom"
+        algo_version = "v1"
         for rd in reversed(run_dirs):
             meta_path = rd / "metrics.json"
             if meta_path.exists():
                 try:
                     meta = json.loads(meta_path.read_text(encoding="utf-8"))
                     stage = meta.get("mode") or "custom"
+                    algo_version = meta.get("algorithm_version") or "v1"
                     break
                 except Exception:
                     pass
@@ -273,6 +275,7 @@ def _collect_leaderboard_data(algo_dirs: list[Path]) -> list[dict]:
         rows.append(
             {
                 "name": d.name,
+                "version": algo_version,
                 "stage": stage,
                 "runs": len(run_dirs),
                 "total_games": len(df_all),
@@ -386,6 +389,11 @@ def _hero_section(rows_data: list[dict]) -> str:
     return f'<div class="hero-section">{"".join(cards)}</div>'
 
 
+def _version_badge(version: str) -> str:
+    """Return a small HTML version badge element."""
+    return f'<span class="version-badge">{html.escape(version)}</span>'
+
+
 def _leaderboard_section(rows_data: list[dict]) -> str:
     """Build the main leaderboard table sorted by avg_score.
 
@@ -402,6 +410,7 @@ def _leaderboard_section(rows_data: list[dict]) -> str:
             "<tr>"
             f"<td{rank_cls}>{i}</td>"
             f"<td><strong>{html.escape(r['name'])}</strong></td>"
+            f"<td>{_version_badge(r.get('version', 'v1'))}</td>"
             f"<td class=\"num\"><strong>{r['avg_score']:,.0f}</strong></td>"
             f"<td class=\"num\">{r['p90_score']:,.0f}</td>"
             f"<td class=\"num\">{r['max_score']:,.0f}</td>"
@@ -422,6 +431,7 @@ def _leaderboard_section(rows_data: list[dict]) -> str:
           <tr>
             <th>#</th>
             <th>Algorithm</th>
+            <th>Version</th>
             <th class="num">Avg Score</th>
             <th class="num">P90</th>
             <th class="num">Max Score</th>
@@ -886,16 +896,27 @@ def _run_accordion_item(
     best_tile = df["best_tile"].max()
     win_rate = df["won"].mean() * 100
 
+    # Read algorithm version from metrics.json (if present).
+    run_version = "v1"
+    meta_path = run_dir / "metrics.json"
+    if meta_path.exists():
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            run_version = meta.get("algorithm_version") or "v1"
+        except Exception:
+            pass
+
     # Derive a display-friendly timestamp from the dir name (strip "run_" prefix)
     stem = run_dir.name.removeprefix("run_")
     ts_display = stem.replace("_", " ")
     anchor = f"run-{html.escape(stem)}"
 
-    # Chips shown in the summary row
+    # Chips shown in the summary row — version chip comes first
     latest_chip = '<span class="chip chip-latest">latest</span>' if is_latest else ""
     chips_html = (
         f'<div class="run-chips">'
         f'{latest_chip}'
+        f'<span class="chip chip-version">{html.escape(run_version)}</span>'
         f'<span class="chip">{n} games</span>'
         f'<span class="chip">avg {avg_score:,.0f}</span>'
         f'<span class="chip">best tile {best_tile}</span>'
@@ -964,6 +985,18 @@ def _algo_section(algo_name: str, algo_dir: Path) -> str:
     df_all = pd.concat(frames, ignore_index=True)
     stats_html = _stats_grid(df_all)
 
+    # Read the latest version from the most recent run's metrics.json
+    latest_version = "v1"
+    for rd in reversed(run_dirs):
+        meta_path = rd / "metrics.json"
+        if meta_path.exists():
+            try:
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
+                latest_version = meta.get("algorithm_version") or "v1"
+                break
+            except Exception:
+                pass
+
     # ── Inline summary charts ──────────────────────────────────────────
     tile_src = _tile_dist_chart_src(df_all)
     stability_src = _run_stability_chart_src(run_dirs)
@@ -1000,11 +1033,13 @@ def _algo_section(algo_name: str, algo_dir: Path) -> str:
     accordion_html = "\n".join(accordion_items)
     runs_label = f"{len(run_dirs)} run{'s' if len(run_dirs) != 1 else ''} stored"
     section_id = f"algo-{html.escape(algo_name.lower().replace(' ', '-'))}"
+    version_badge_html = _version_badge(latest_version)
 
     return f"""\
 <section class="algo-section" id="{section_id}">
   <div class="algo-section-header">
     🤖 {html.escape(algo_name)}
+    {version_badge_html}
     <span class="algo-section-runs-label">({runs_label})</span>
   </div>
   <div class="algo-section-body">
@@ -1174,6 +1209,11 @@ def generate_html_report(
     """
     results_dir = Path(results_dir)
     output_path = Path(output_path)
+
+    # Migrate any pre-versioning result directories before scanning.
+    # Import locally to avoid a circular dependency.
+    from main import migrate_legacy_result_dirs
+    migrate_legacy_result_dirs(results_dir)
 
     algo_dirs = sorted(
         p for p in results_dir.iterdir() if p.is_dir()
