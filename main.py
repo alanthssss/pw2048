@@ -110,6 +110,22 @@ Examples
                    --checkpoint-dir checkpoints \\
                    --tensorboard-dir tb_logs \\
                    --games 0
+
+    # --- GPU acceleration (Apple Silicon M1 / CUDA) ---
+    # DQN-v3 and PPO-v3 automatically use PyTorch MPS (M1 GPU) or CUDA when
+    # torch is installed.  Install torch first:
+    #   pip install torch
+    # Then training uses the GPU automatically — no extra flags needed.
+    python main.py --algorithm dqn --train-games 10000 --games 0
+
+    # --- Parallel training ---
+    # Train 4 independent workers simultaneously, pick the best:
+    python main.py --algorithm dqn --train-games 5000 --train-workers 4 \\
+                   --checkpoint-dir checkpoints --games 0
+
+    # Combine GPU + parallel workers for maximum speed on M1:
+    python main.py --algorithm dqn --train-games 10000 --train-workers 4 \\
+                   --checkpoint-dir checkpoints --games 0
 """
 
 from __future__ import annotations
@@ -582,6 +598,21 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "Visualise with: tensorboard --logdir <DIR>"
         ),
     )
+    parser.add_argument(
+        "--train-workers",
+        type=int,
+        default=1,
+        metavar="N",
+        help=(
+            "Number of parallel independent training workers for "
+            "--train-games mode (default: 1 = sequential).  "
+            "When N > 1, N separate processes each train for --train-games "
+            "games simultaneously using the same initial weights but different "
+            "random seeds; the best-scoring worker's model is then selected.  "
+            "Reduces wall-clock training time roughly N-fold on multi-core CPUs.  "
+            "Only valid for learning algorithms that support checkpoints (dqn, ppo)."
+        ),
+    )
 
     argcomplete.autocomplete(parser)
     args = parser.parse_args(argv)
@@ -691,6 +722,7 @@ def main(argv: list[str] | None = None) -> None:
             eval_freq=args.eval_freq,
             n_eval_games=args.n_eval_games,
             verbose=True,
+            n_workers=args.train_workers,
         )
         trainer.train(total_games=args.train_games)
 

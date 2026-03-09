@@ -13,6 +13,33 @@ from .base import BaseAlgorithm
 from .greedy_algo import simulate_move, _boards_equal
 from src.game import DIRECTIONS
 
+# ---------------------------------------------------------------------------
+# Optional PyTorch backend (GPU / MPS / CUDA acceleration)
+# ---------------------------------------------------------------------------
+
+try:
+    import torch as _torch
+    import torch.nn as _nn
+    import torch.nn.functional as _F
+    _TORCH_AVAILABLE = True
+except ImportError:  # pragma: no cover
+    _TORCH_AVAILABLE = False
+
+
+def _detect_device() -> Optional[str]:
+    """Return the best available compute device string for PyTorch.
+
+    Detection priority: Apple Silicon MPS → CUDA GPU → CPU.  Returns ``None``
+    if PyTorch is not installed.
+    """
+    if not _TORCH_AVAILABLE:
+        return None
+    if _torch.backends.mps.is_available():
+        return "mps"
+    if _torch.cuda.is_available():
+        return "cuda"
+    return "cpu"
+
 # Map direction strings to integer indices (must be consistent with DIRECTIONS).
 _DIR_INDEX: dict[str, int] = {d: i for i, d in enumerate(DIRECTIONS)}
 _N_ACTIONS = 4
@@ -158,6 +185,97 @@ class _ActorCritic:
         self.b_a -= lr * db_a
         self.W_v -= lr * dW_v
         self.b_v -= lr * db_v
+
+
+# ---------------------------------------------------------------------------
+# PyTorch actor-critic network (optional — only instantiated when torch available)
+# ---------------------------------------------------------------------------
+
+class _TorchActorCritic(_nn.Module if _TORCH_AVAILABLE else object):  # type: ignore[misc]
+    """Shared-backbone actor-critic network implemented with PyTorch.
+
+    Architecture matches :class:`_ActorCritic`:
+    Input → Linear → ReLU → Linear → ReLU → actor head (4 logits)
+                                           → critic head (1 value)
+
+    Parameters
+    ----------
+    in_dim:
+        Input dimensionality (256 for the one-hot board encoding).
+    hidden:
+        Hidden layer width.
+    device:
+        Target compute device string (``"mps"``, ``"cuda"``, or ``"cpu"``).
+    """
+
+    def __init__(self, in_dim: int, hidden: int, device: str) -> None:
+        super().__init__()
+        self.fc1  = _nn.Linear(in_dim, hidden)
+        self.fc2  = _nn.Linear(hidden, hidden)
+        self.fc_a = _nn.Linear(hidden, _N_ACTIONS)
+        self.fc_v = _nn.Linear(hidden, 1)
+        self._device_str = device
+        # He initialisation for layers preceding ReLU.
+        for fc in (self.fc1, self.fc2):
+            _nn.init.kaiming_normal_(fc.weight, nonlinearity="relu")
+            _nn.init.zeros_(fc.bias)
+        # Small init for actor head → near-uniform initial policy.
+        _nn.init.normal_(self.fc_a.weight, 0.0, 0.01)
+        _nn.init.zeros_(self.fc_a.bias)
+        _nn.init.kaiming_normal_(self.fc_v.weight, nonlinearity="relu")
+        _nn.init.zeros_(self.fc_v.bias)
+        self.to(_torch.device(device))
+
+    def forward(  # type: ignore[override]
+        self, x: "_torch.Tensor"
+    ) -> "tuple[_torch.Tensor, _torch.Tensor]":
+        """Forward pass.  Returns ``(logits, values)``.
+
+        Parameters
+        ----------
+        x:
+            Input tensor of shape ``(batch, in_dim)``.
+
+        Returns
+        -------
+        tuple
+            ``(logits, values)`` where *logits* has shape ``(batch, 4)``
+            and *values* has shape ``(batch,)``.
+        """
+        h = _F.relu(self.fc1(x))
+        h = _F.relu(self.fc2(h))
+        logits = self.fc_a(h)
+        values = self.fc_v(h).squeeze(-1)
+        return logits, values
+
+    def weights_to_numpy(self) -> dict[str, np.ndarray]:
+        """Return weights as a numpy dict using the same keys as :class:`_ActorCritic`."""
+        sd = self.state_dict()
+        return {
+            "W1":  sd["fc1.weight"].cpu().numpy().T,
+            "b1":  sd["fc1.bias"].cpu().numpy(),
+            "W2":  sd["fc2.weight"].cpu().numpy().T,
+            "b2":  sd["fc2.bias"].cpu().numpy(),
+            "W_a": sd["fc_a.weight"].cpu().numpy().T,
+            "b_a": sd["fc_a.bias"].cpu().numpy(),
+            "W_v": sd["fc_v.weight"].cpu().numpy().T,
+            "b_v": sd["fc_v.bias"].cpu().numpy(),
+        }
+
+    def weights_from_numpy(self, d: dict) -> None:
+        """Load weights from a numpy dict (inverse of :meth:`weights_to_numpy`)."""
+        device = _torch.device(self._device_str)
+        new_sd = {
+            "fc1.weight":  _torch.from_numpy(d["W1"].T.copy()).to(device),
+            "fc1.bias":    _torch.from_numpy(d["b1"].copy()).to(device),
+            "fc2.weight":  _torch.from_numpy(d["W2"].T.copy()).to(device),
+            "fc2.bias":    _torch.from_numpy(d["b2"].copy()).to(device),
+            "fc_a.weight": _torch.from_numpy(d["W_a"].T.copy()).to(device),
+            "fc_a.bias":   _torch.from_numpy(d["b_a"].copy()).to(device),
+            "fc_v.weight": _torch.from_numpy(d["W_v"].T.copy()).to(device),
+            "fc_v.bias":   _torch.from_numpy(d["b_v"].copy()).to(device),
+        }
+        self.load_state_dict(new_sd)
 
 
 # ---------------------------------------------------------------------------
@@ -782,6 +900,10 @@ class PPOAlgorithmV3(BaseAlgorithm):
     * **Behavioural-cloning pre-training**: before any RL experience the
       actor head is warmed up by imitating the Heuristic algorithm on
       ``n_pretrain_games`` simulated games (browser-free, in-process).
+    * **Optional GPU acceleration**: when PyTorch is installed the network runs
+      on Apple Silicon MPS, CUDA, or CPU using hardware-accelerated matrix ops.
+      Pass ``device="mps"`` / ``"cuda"`` / ``"cpu"`` to override auto-detection,
+      or ``device="numpy"`` to force the pure-NumPy backend regardless.
 
     Parameters
     ----------
@@ -808,6 +930,12 @@ class PPOAlgorithmV3(BaseAlgorithm):
         pre-training at construction time.  Set to 0 to disable.
     seed:
         Optional RNG seed.
+    device:
+        Compute device for the neural network.  ``None`` (default) enables
+        automatic detection: PyTorch MPS → CUDA → CPU → NumPy fallback.
+        Pass ``"numpy"`` to force the pure-NumPy backend, or any valid
+        ``torch.device`` string (``"mps"``, ``"cuda"``, ``"cpu"``) to pin a
+        specific PyTorch device.
     """
 
     name = "PPO-v3"
@@ -829,13 +957,36 @@ class PPOAlgorithmV3(BaseAlgorithm):
         n_pretrain_games: int = 50,
         seed: Optional[int] = None,
         checkpoint_path: Optional[Union[str, Path]] = None,
+        device: Optional[str] = None,
     ) -> None:
         self._rng = random.Random(seed)
         np_seed = seed if seed is not None else 42
         self._np_rng = np.random.default_rng(np_seed)
 
-        self._net = _ActorCritic(_N_STATE_V3, hidden_size, self._np_rng)
-        self._optimizer = _Adam(lr=lr)
+        # ------------------------------------------------------------------
+        # Choose compute backend: PyTorch (GPU/MPS/CPU) or pure NumPy.
+        # ------------------------------------------------------------------
+        if device == "numpy":
+            self._torch_device: Optional[str] = None
+        elif device is not None:
+            self._torch_device = device if _TORCH_AVAILABLE else None
+        else:
+            self._torch_device = _detect_device()
+
+        self._use_torch: bool = self._torch_device is not None
+
+        if self._use_torch:
+            self._net: Union[_ActorCritic, "_TorchActorCritic"] = _TorchActorCritic(
+                _N_STATE_V3, hidden_size, self._torch_device  # type: ignore[arg-type]
+            )
+            self._torch_optimizer = _torch.optim.Adam(  # type: ignore[union-attr]
+                self._net.parameters(),  # type: ignore[union-attr]
+                lr=lr,
+            )
+            self._optimizer = _Adam(lr=lr)  # kept for numpy-format adam state in checkpoints
+        else:
+            self._net = _ActorCritic(_N_STATE_V3, hidden_size, self._np_rng)
+            self._optimizer = _Adam(lr=lr)
 
         self._gamma = gamma
         self._lam = lam
@@ -909,8 +1060,8 @@ class PPOAlgorithmV3(BaseAlgorithm):
             self._buf_dones.append(done)
 
             if len(self._buf_states) >= self._update_freq:
-                _, next_val, *_ = self._net.forward(state)
-                self._ppo_update(float(next_val))
+                next_val = self._forward_value(state)
+                self._ppo_update(next_val)
                 self._buf_states.clear()
                 self._buf_actions.clear()
                 self._buf_log_probs.clear()
@@ -921,7 +1072,7 @@ class PPOAlgorithmV3(BaseAlgorithm):
         # ----------------------------------------------------------------
         # Policy forward pass — mask invalid actions
         # ----------------------------------------------------------------
-        logits, value, *_ = self._net.forward(state)
+        logits, value = self._forward_policy(state)
         valid_idx = [_DIR_INDEX[d] for d in valid_dirs]
         mask = np.full(_N_ACTIONS, -1e9, dtype=np.float32)
         mask[valid_idx] = 0.0
@@ -964,7 +1115,7 @@ class PPOAlgorithmV3(BaseAlgorithm):
         ]
         if not valid_dirs:
             valid_dirs = list(DIRECTIONS)
-        logits, _, *_ = self._net.forward(state)
+        logits, _ = self._forward_policy(state)
         valid_idx = [_DIR_INDEX[d] for d in valid_dirs]
         mask = np.full(_N_ACTIONS, -1e9, dtype=np.float32)
         mask[valid_idx] = 0.0
@@ -972,11 +1123,38 @@ class PPOAlgorithmV3(BaseAlgorithm):
         return DIRECTIONS[best]
 
     # ------------------------------------------------------------------
+    # Compute-backend helpers
+    # ------------------------------------------------------------------
+
+    def _forward_policy(self, state: np.ndarray) -> tuple:
+        """Single-state forward pass → (logits, value) as numpy arrays/floats."""
+        if self._use_torch:
+            with _torch.no_grad():
+                t = _torch.from_numpy(state).unsqueeze(0).to(self._torch_device)
+                logits_t, value_t = self._net(t)  # type: ignore[operator]
+                return logits_t.squeeze(0).cpu().numpy(), float(value_t.squeeze(0).cpu())
+        else:
+            logits, value, *_ = self._net.forward(state)  # type: ignore[union-attr]
+            return logits, value
+
+    def _forward_value(self, state: np.ndarray) -> float:
+        """Single-state value estimate (scalar float)."""
+        _, value = self._forward_policy(state)
+        return float(value)
+
+    # ------------------------------------------------------------------
     # PPO update
     # ------------------------------------------------------------------
 
     def _ppo_update(self, next_value: float) -> None:
-        """Run ``n_epochs`` PPO-Clip updates over the collected rollout."""
+        """Dispatch to torch or numpy PPO update backend."""
+        if self._use_torch:
+            self._ppo_update_torch(next_value)
+        else:
+            self._ppo_update_numpy(next_value)
+
+    def _ppo_update_numpy(self, next_value: float) -> None:
+        """Run ``n_epochs`` PPO-Clip updates over the collected rollout (NumPy)."""
         T = len(self._buf_states)
         if T == 0:
             return
@@ -1001,7 +1179,7 @@ class PPOAlgorithmV3(BaseAlgorithm):
         advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
         for _ in range(self._n_epochs):
-            logits, value_pred, h2, z2, h1, z1 = self._net.forward(states)
+            logits, value_pred, h2, z2, h1, z1 = self._net.forward(states)  # type: ignore[union-attr]
             probs_all = _softmax(logits)                                   # (T, 4)
             log_probs_all = np.log(probs_all + 1e-8)                      # (T, 4)
             new_log_probs = log_probs_all[np.arange(T), actions]          # (T,)
@@ -1032,12 +1210,12 @@ class PPOAlgorithmV3(BaseAlgorithm):
             # --- Actor head ---
             dW_a = h2.T @ dL_d_logits                                      # (hidden, 4)
             db_a = dL_d_logits.sum(axis=0)                                 # (4,)
-            dL_dh2 = dL_d_logits @ self._net.W_a.T                        # (T, hidden)
+            dL_dh2 = dL_d_logits @ self._net.W_a.T                        # type: ignore[union-attr]  # (T, hidden)
 
             # --- Critic head ---
             dW_v = h2.T @ dL_dv[:, None]                                   # (hidden, 1)
             db_v = dL_dv.sum(keepdims=True)                                # (1,)
-            dL_dh2 += dL_dv[:, None] @ self._net.W_v.T                    # (T, hidden)
+            dL_dh2 += dL_dv[:, None] @ self._net.W_v.T                    # type: ignore[union-attr]  # (T, hidden)
 
             # --- Shared hidden layer 2 ---
             dz2 = dL_dh2 * _relu_grad(z2)                                  # (T, hidden)
@@ -1045,21 +1223,74 @@ class PPOAlgorithmV3(BaseAlgorithm):
             db2 = dz2.sum(axis=0)                                          # (hidden,)
 
             # --- Shared hidden layer 1 ---
-            dh1 = dz2 @ self._net.W2.T                                     # (T, hidden)
+            dh1 = dz2 @ self._net.W2.T                                     # type: ignore[union-attr]  # (T, hidden)
             dz1 = dh1 * _relu_grad(z1)                                     # (T, hidden)
             dW1 = states.T @ dz1                                           # (256, hidden)
             db1 = dz1.sum(axis=0)                                          # (hidden,)
 
             self._optimizer.step([
-                ("W1",   self._net.W1,   dW1),
-                ("b1",   self._net.b1,   db1),
-                ("W2",   self._net.W2,   dW2),
-                ("b2",   self._net.b2,   db2),
-                ("W_a",  self._net.W_a,  dW_a),
-                ("b_a",  self._net.b_a,  db_a),
-                ("W_v",  self._net.W_v,  dW_v),
-                ("b_v",  self._net.b_v,  db_v),
+                ("W1",   self._net.W1,   dW1),   # type: ignore[union-attr]
+                ("b1",   self._net.b1,   db1),   # type: ignore[union-attr]
+                ("W2",   self._net.W2,   dW2),   # type: ignore[union-attr]
+                ("b2",   self._net.b2,   db2),   # type: ignore[union-attr]
+                ("W_a",  self._net.W_a,  dW_a),  # type: ignore[union-attr]
+                ("b_a",  self._net.b_a,  db_a),  # type: ignore[union-attr]
+                ("W_v",  self._net.W_v,  dW_v),  # type: ignore[union-attr]
+                ("b_v",  self._net.b_v,  db_v),  # type: ignore[union-attr]
             ])
+
+    def _ppo_update_torch(self, next_value: float) -> None:
+        """Run ``n_epochs`` PPO-Clip updates over the collected rollout (PyTorch)."""
+        T = len(self._buf_states)
+        if T == 0:
+            return
+
+        states_np = np.array(self._buf_states, dtype=np.float32)
+        actions_np = np.array(self._buf_actions, dtype=np.int32)
+        old_log_probs_np = np.array(self._buf_log_probs, dtype=np.float32)
+        rewards_np = np.array(self._buf_rewards, dtype=np.float32)
+        values_np = np.array(self._buf_values, dtype=np.float32)
+        dones_np = np.array(self._buf_dones, dtype=np.float32)
+
+        # GAE is computed in numpy (simple loop — not a bottleneck).
+        advantages_np = np.zeros(T, dtype=np.float32)
+        gae = 0.0
+        for t in reversed(range(T)):
+            next_val = next_value if t == T - 1 else values_np[t + 1]
+            delta = rewards_np[t] + self._gamma * next_val * (1.0 - dones_np[t]) - values_np[t]
+            gae = delta + self._gamma * self._lam * (1.0 - dones_np[t]) * gae
+            advantages_np[t] = gae
+
+        returns_np = advantages_np + values_np
+        advantages_np = (advantages_np - advantages_np.mean()) / (advantages_np.std() + 1e-8)
+
+        device = _torch.device(self._torch_device)  # type: ignore[arg-type]
+        states_t       = _torch.from_numpy(states_np).to(device)
+        actions_t      = _torch.from_numpy(actions_np.astype(np.int64)).to(device)
+        old_lp_t       = _torch.from_numpy(old_log_probs_np).to(device)
+        advantages_t   = _torch.from_numpy(advantages_np).to(device)
+        returns_t      = _torch.from_numpy(returns_np).to(device)
+
+        for _ in range(self._n_epochs):
+            logits, values_pred = self._net(states_t)  # type: ignore[operator]
+            log_probs = _F.log_softmax(logits, dim=-1)
+            new_lp = log_probs[_torch.arange(T, device=device), actions_t]
+
+            ratio = _torch.exp(new_lp - old_lp_t)
+            surr1 = ratio * advantages_t
+            surr2 = _torch.clamp(ratio, 1.0 - self._clip_eps, 1.0 + self._clip_eps) * advantages_t
+            policy_loss = -_torch.min(surr1, surr2).mean()
+
+            value_loss = self._value_coef * _F.mse_loss(values_pred, returns_t)
+
+            probs = _F.softmax(logits, dim=-1)
+            entropy = -(probs * log_probs).sum(dim=-1).mean()
+            entropy_loss = -self._entropy_coef * entropy
+
+            loss = policy_loss + value_loss + entropy_loss
+            self._torch_optimizer.zero_grad()
+            loss.backward()
+            self._torch_optimizer.step()
 
     # ------------------------------------------------------------------
     # Checkpoint persistence
@@ -1070,7 +1301,7 @@ class PPOAlgorithmV3(BaseAlgorithm):
 
         Saved state
         -----------
-        * Actor-critic network weights
+        * Actor-critic network weights (in NumPy format for backend portability)
         * Adam optimizer state (step counter, first and second moment vectors)
 
         The rollout buffer is intentionally **not** saved — PPO is on-policy
@@ -1081,29 +1312,42 @@ class PPOAlgorithmV3(BaseAlgorithm):
         path:
             Destination file.  A ``.npz`` extension is recommended.
         """
-        data: dict[str, np.ndarray] = {
-            # Shared hidden layers
-            "W1":  self._net.W1,
-            "b1":  self._net.b1,
-            "W2":  self._net.W2,
-            "b2":  self._net.b2,
-            # Actor head
-            "W_a": self._net.W_a,
-            "b_a": self._net.b_a,
-            # Critic head
-            "W_v": self._net.W_v,
-            "b_v": self._net.b_v,
-            # Adam step counter
-            "adam_t": np.array([self._optimizer._t], dtype=np.int64),
-        }
-        for k, v in self._optimizer._m.items():
-            data[f"adam_m_{k}"] = v
-        for k, v in self._optimizer._v.items():
-            data[f"adam_v_{k}"] = v
+        if self._use_torch:
+            np_dict = self._net.weights_to_numpy()  # type: ignore[union-attr]
+            data: dict[str, np.ndarray] = {
+                "W1": np_dict["W1"], "b1": np_dict["b1"],
+                "W2": np_dict["W2"], "b2": np_dict["b2"],
+                "W_a": np_dict["W_a"], "b_a": np_dict["b_a"],
+                "W_v": np_dict["W_v"], "b_v": np_dict["b_v"],
+                "adam_t": np.array([0], dtype=np.int64),
+            }
+        else:
+            data = {
+                # Shared hidden layers
+                "W1":  self._net.W1,   # type: ignore[union-attr]
+                "b1":  self._net.b1,   # type: ignore[union-attr]
+                "W2":  self._net.W2,   # type: ignore[union-attr]
+                "b2":  self._net.b2,   # type: ignore[union-attr]
+                # Actor head
+                "W_a": self._net.W_a,  # type: ignore[union-attr]
+                "b_a": self._net.b_a,  # type: ignore[union-attr]
+                # Critic head
+                "W_v": self._net.W_v,  # type: ignore[union-attr]
+                "b_v": self._net.b_v,  # type: ignore[union-attr]
+                # Adam step counter
+                "adam_t": np.array([self._optimizer._t], dtype=np.int64),
+            }
+            for k, v in self._optimizer._m.items():
+                data[f"adam_m_{k}"] = v
+            for k, v in self._optimizer._v.items():
+                data[f"adam_v_{k}"] = v
         np.savez(path, **data)
 
     def load_checkpoint(self, path: Union[str, Path]) -> None:
         """Restore trainable state saved by :meth:`save_checkpoint`.
+
+        Checkpoints are backend-portable: a checkpoint saved with the PyTorch
+        backend can be loaded by the NumPy backend and vice versa.
 
         Parameters
         ----------
@@ -1116,21 +1360,26 @@ class PPOAlgorithmV3(BaseAlgorithm):
             If *path* does not exist.
         """
         d = np.load(path)
-        self._net.W1  = d["W1"].copy()
-        self._net.b1  = d["b1"].copy()
-        self._net.W2  = d["W2"].copy()
-        self._net.b2  = d["b2"].copy()
-        self._net.W_a = d["W_a"].copy()
-        self._net.b_a = d["b_a"].copy()
-        self._net.W_v = d["W_v"].copy()
-        self._net.b_v = d["b_v"].copy()
-        self._optimizer._t = int(d["adam_t"][0])
-        self._optimizer._m = {
-            k[7:]: d[k].copy() for k in d.files if k.startswith("adam_m_")
-        }
-        self._optimizer._v = {
-            k[7:]: d[k].copy() for k in d.files if k.startswith("adam_v_")
-        }
+        if self._use_torch:
+            self._net.weights_from_numpy(  # type: ignore[union-attr]
+                {k: d[k] for k in ("W1", "b1", "W2", "b2", "W_a", "b_a", "W_v", "b_v")}
+            )
+        else:
+            self._net.W1  = d["W1"].copy()   # type: ignore[union-attr]
+            self._net.b1  = d["b1"].copy()   # type: ignore[union-attr]
+            self._net.W2  = d["W2"].copy()   # type: ignore[union-attr]
+            self._net.b2  = d["b2"].copy()   # type: ignore[union-attr]
+            self._net.W_a = d["W_a"].copy()  # type: ignore[union-attr]
+            self._net.b_a = d["b_a"].copy()  # type: ignore[union-attr]
+            self._net.W_v = d["W_v"].copy()  # type: ignore[union-attr]
+            self._net.b_v = d["b_v"].copy()  # type: ignore[union-attr]
+            self._optimizer._t = int(d["adam_t"][0])
+            self._optimizer._m = {
+                k[7:]: d[k].copy() for k in d.files if k.startswith("adam_m_")
+            }
+            self._optimizer._v = {
+                k[7:]: d[k].copy() for k in d.files if k.startswith("adam_v_")
+            }
 
     # ------------------------------------------------------------------
     # Behavioural-cloning pre-training
@@ -1179,42 +1428,58 @@ class PPOAlgorithmV3(BaseAlgorithm):
         n = len(states)
         bc_batch = min(256, n)
 
-        # Three supervised passes over the collected data.
-        for _epoch in range(3):
-            perm = self._np_rng.permutation(n)
-            for start in range(0, n - bc_batch + 1, bc_batch):
-                S = states[perm[start:start + bc_batch]]       # (B, 256)
-                A = actions[perm[start:start + bc_batch]]      # (B,)
-                B = len(S)
+        if self._use_torch:
+            # PyTorch cross-entropy supervised pass (actor head only).
+            device = _torch.device(self._torch_device)  # type: ignore[arg-type]
+            for _epoch in range(3):
+                perm = self._np_rng.permutation(n)
+                for start in range(0, n - bc_batch + 1, bc_batch):
+                    S_np = states[perm[start:start + bc_batch]]
+                    A_np = actions[perm[start:start + bc_batch]]
+                    S_t = _torch.from_numpy(S_np).to(device)
+                    A_t = _torch.from_numpy(A_np.astype(np.int64)).to(device)
+                    logits, _ = self._net(S_t)  # type: ignore[operator]
+                    loss = _F.cross_entropy(logits, A_t)
+                    self._torch_optimizer.zero_grad()
+                    loss.backward()
+                    self._torch_optimizer.step()
+        else:
+            # Three supervised passes over the collected data (NumPy).
+            for _epoch in range(3):
+                perm = self._np_rng.permutation(n)
+                for start in range(0, n - bc_batch + 1, bc_batch):
+                    S = states[perm[start:start + bc_batch]]       # (B, 256)
+                    A = actions[perm[start:start + bc_batch]]      # (B,)
+                    B = len(S)
 
-                logits, _, h2, z2, h1, z1 = self._net.forward(S)
+                    logits, _, h2, z2, h1, z1 = self._net.forward(S)  # type: ignore[union-attr]
 
-                # Softmax cross-entropy on actor logits: dL/dl = (softmax(l) − one_hot(a)) / B
-                l_shifted = logits - logits.max(axis=1, keepdims=True)
-                exp_l = np.exp(l_shifted)
-                probs = exp_l / (exp_l.sum(axis=1, keepdims=True) + 1e-8)
-                dL_d_logits = probs.copy()
-                dL_d_logits[np.arange(B), A] -= 1.0
-                dL_d_logits /= B
+                    # Softmax cross-entropy on actor logits: dL/dl = (softmax(l) − one_hot(a)) / B
+                    l_shifted = logits - logits.max(axis=1, keepdims=True)
+                    exp_l = np.exp(l_shifted)
+                    probs = exp_l / (exp_l.sum(axis=1, keepdims=True) + 1e-8)
+                    dL_d_logits = probs.copy()
+                    dL_d_logits[np.arange(B), A] -= 1.0
+                    dL_d_logits /= B
 
-                # Actor head gradients only; critic head gets zero gradient.
-                dW_a = h2.T @ dL_d_logits                      # (hidden, 4)
-                db_a = dL_d_logits.sum(axis=0)                 # (4,)
-                dL_dh2 = dL_d_logits @ self._net.W_a.T         # (B, hidden)
+                    # Actor head gradients only; critic head gets zero gradient.
+                    dW_a = h2.T @ dL_d_logits                      # (hidden, 4)
+                    db_a = dL_d_logits.sum(axis=0)                 # (4,)
+                    dL_dh2 = dL_d_logits @ self._net.W_a.T         # type: ignore[union-attr]  # (B, hidden)
 
-                dz2 = dL_dh2 * _relu_grad(z2)                  # (B, hidden)
-                dW2 = h1.T @ dz2                               # (hidden, hidden)
-                db2 = dz2.sum(axis=0)                          # (hidden,)
-                dh1 = dz2 @ self._net.W2.T                     # (B, hidden)
-                dz1 = dh1 * _relu_grad(z1)                     # (B, hidden)
-                dW1 = S.T @ dz1                                # (256, hidden)
-                db1 = dz1.sum(axis=0)                          # (hidden,)
+                    dz2 = dL_dh2 * _relu_grad(z2)                  # (B, hidden)
+                    dW2 = h1.T @ dz2                               # (hidden, hidden)
+                    db2 = dz2.sum(axis=0)                          # (hidden,)
+                    dh1 = dz2 @ self._net.W2.T                     # type: ignore[union-attr]  # (B, hidden)
+                    dz1 = dh1 * _relu_grad(z1)                     # (B, hidden)
+                    dW1 = S.T @ dz1                                # (256, hidden)
+                    db1 = dz1.sum(axis=0)                          # (hidden,)
 
-                self._optimizer.step([
-                    ("W1",   self._net.W1,   dW1),
-                    ("b1",   self._net.b1,   db1),
-                    ("W2",   self._net.W2,   dW2),
-                    ("b2",   self._net.b2,   db2),
-                    ("W_a",  self._net.W_a,  dW_a),
-                    ("b_a",  self._net.b_a,  db_a),
-                ])
+                    self._optimizer.step([
+                        ("W1",   self._net.W1,   dW1),   # type: ignore[union-attr]
+                        ("b1",   self._net.b1,   db1),   # type: ignore[union-attr]
+                        ("W2",   self._net.W2,   dW2),   # type: ignore[union-attr]
+                        ("b2",   self._net.b2,   db2),   # type: ignore[union-attr]
+                        ("W_a",  self._net.W_a,  dW_a),  # type: ignore[union-attr]
+                        ("b_a",  self._net.b_a,  db_a),  # type: ignore[union-attr]
+                    ])

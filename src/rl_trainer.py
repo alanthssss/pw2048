@@ -61,6 +61,92 @@ if TYPE_CHECKING:
 
 
 # ---------------------------------------------------------------------------
+# Parallel training worker — module-level so it is picklable by multiprocessing
+# ---------------------------------------------------------------------------
+
+def _parallel_train_worker(
+    algo_class_module: str,
+    algo_class_name: str,
+    base_ckpt_path: Optional[str],
+    total_games: int,
+    output_ckpt_path: str,
+    worker_seed: int,
+) -> dict:
+    """Run one independent training session and save the resulting checkpoint.
+
+    This function is intentionally defined at module level so that Python's
+    ``multiprocessing`` (which uses pickle) can serialize it when spawning
+    worker processes.
+
+    Parameters
+    ----------
+    algo_class_module:
+        Fully-qualified module name of the algorithm class
+        (e.g. ``"src.algorithms.dqn_algo"``).
+    algo_class_name:
+        Class name inside the module (e.g. ``"DQNAlgorithmV3"``).
+    base_ckpt_path:
+        Path to a ``.npz`` checkpoint created from the initial algorithm
+        state.  When provided (and the file exists) the worker loads this
+        checkpoint so that all workers start from the *same* initial weights;
+        only their random seeds differ, giving diverse exploration paths.
+    total_games:
+        Number of training games to play in this worker.
+    output_ckpt_path:
+        Where to save the worker's final checkpoint after training.
+    worker_seed:
+        RNG seed for this worker; each worker should receive a distinct seed.
+
+    Returns
+    -------
+    dict
+        Summary dict with keys ``total_games``, ``mean_score``, ``max_score``,
+        ``max_tile``, ``total_steps``.
+    """
+    import importlib
+
+    module = importlib.import_module(algo_class_module)
+    algo_cls = getattr(module, algo_class_name)
+
+    # Construct the algorithm, loading from base checkpoint if available.
+    algo_kwargs: dict = {"seed": worker_seed, "n_pretrain_games": 0}
+    if base_ckpt_path and Path(base_ckpt_path).exists():
+        algo_kwargs["checkpoint_path"] = base_ckpt_path
+    algo = algo_cls(**algo_kwargs)
+
+    # Minimal training loop (no logging / eval callbacks).
+    from src.rl_env import Game2048Env
+    from src.game import DIRECTIONS
+
+    env = Game2048Env()
+    scores: list = []
+    max_tiles: list = []
+    n_steps_list: list = []
+
+    for _ in range(total_games):
+        env.reset()
+        algo.on_game_start()
+        while not env.is_done:
+            direction = algo.choose_move(env.board)
+            env.step(DIRECTIONS.index(direction))
+        scores.append(env.score)
+        max_tiles.append(env.max_tile)
+        n_steps_list.append(env.n_steps)
+
+    # Save the trained checkpoint for the main process to evaluate.
+    if hasattr(algo, "save_checkpoint"):
+        algo.save_checkpoint(output_ckpt_path)
+
+    return {
+        "total_games": total_games,
+        "mean_score":  float(np.mean(scores)) if scores else 0.0,
+        "max_score":   int(np.max(scores))    if scores else 0,
+        "max_tile":    int(np.max(max_tiles)) if max_tiles else 0,
+        "total_steps": int(sum(n_steps_list)),
+    }
+
+
+# ---------------------------------------------------------------------------
 # TrainingLogger — CSV + optional TensorBoard
 # ---------------------------------------------------------------------------
 
@@ -376,6 +462,18 @@ class RLTrainer:
         periodic evaluation.
     verbose:
         If ``True`` (default), print per-game statistics during training.
+    n_workers:
+        Number of parallel independent training processes to run when
+        ``n_workers > 1``.  Each worker trains the algorithm with the same
+        initial weights (loaded from a temporary checkpoint) but a different
+        random seed, giving diverse exploration trajectories.  After all
+        workers finish, the one with the highest mean score is selected and
+        its checkpoint is loaded back into this trainer's algorithm.
+        The wall-clock training time is roughly ``total_games / n_workers``
+        games per process rather than ``total_games`` games sequentially.
+        Requires the algorithm class to support :meth:`save_checkpoint` and
+        :meth:`load_checkpoint`.  Falls back to sequential training if the
+        algorithm does not support checkpoints.
     """
 
     def __init__(
@@ -386,6 +484,7 @@ class RLTrainer:
         tensorboard_dir: Optional[Union[str, Path]] = None,
         eval_callback: Optional[EvalCallback] = None,
         verbose: bool = True,
+        n_workers: int = 1,
     ) -> None:
         self._algo = algorithm
         self._ckpt_dir: Optional[Path] = Path(checkpoint_dir) if checkpoint_dir else None
@@ -394,6 +493,7 @@ class RLTrainer:
         )
         self._eval_cb = eval_callback
         self._verbose = verbose
+        self._n_workers = max(1, int(n_workers))
         self._env = Game2048Env()
 
         if self._ckpt_dir is not None:
@@ -406,13 +506,16 @@ class RLTrainer:
     def train(self, total_games: int) -> dict:
         """Run *total_games* training episodes.
 
-        Each episode uses the in-process :class:`~src.rl_env.Game2048Env`
-        rather than a browser, making training substantially faster.
+        When ``n_workers > 1`` *and* the algorithm supports checkpoints, the
+        training is distributed across ``n_workers`` independent processes
+        (see class-level docstring).  Otherwise training runs sequentially in
+        the current process.
 
         Parameters
         ----------
         total_games:
-            Number of training games to play.
+            Number of training games to play (per worker when
+            ``n_workers > 1``).
 
         Returns
         -------
@@ -420,7 +523,19 @@ class RLTrainer:
             Training summary with keys:
             ``total_games``, ``mean_score``, ``max_score``, ``max_tile``,
             ``total_steps``, ``elapsed_s``, ``best_eval_score``.
+            When parallel workers are used an additional ``n_workers`` key is
+            included.
         """
+        if self._n_workers > 1 and hasattr(self._algo, "save_checkpoint"):
+            return self._parallel_train(total_games)
+        return self._sequential_train(total_games)
+
+    # ------------------------------------------------------------------
+    # Sequential training (original implementation)
+    # ------------------------------------------------------------------
+
+    def _sequential_train(self, total_games: int) -> dict:
+        """Original single-process training loop."""
         scores: List[int] = []
         max_tiles: List[int] = []
         t0 = time.perf_counter()
@@ -513,6 +628,128 @@ class RLTrainer:
             "n_steps":  self._env.n_steps,
         }
 
+    # ------------------------------------------------------------------
+    # Parallel training
+    # ------------------------------------------------------------------
+
+    def _parallel_train(self, total_games: int) -> dict:
+        """Train using ``n_workers`` independent parallel processes.
+
+        Each worker receives a copy of the current algorithm weights, trains
+        for *total_games* games with its own random seed, and saves a
+        checkpoint.  The main process evaluates all workers and loads the
+        best-performing checkpoint back into ``self._algo``.
+
+        Parameters
+        ----------
+        total_games:
+            Number of games each worker trains for.
+
+        Returns
+        -------
+        dict
+            Summary from the best worker, plus an additional ``n_workers`` key.
+        """
+        import concurrent.futures
+        import tempfile
+
+        n = self._n_workers
+        algo = self._algo
+        t0 = time.perf_counter()
+
+        if self._verbose:
+            print(f"\n  Parallel training: {n} workers × {total_games} games each…")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+
+            # Save initial algorithm state so all workers start identically.
+            base_ckpt_path = str(tmp / "base.npz")
+            algo.save_checkpoint(base_ckpt_path)  # type: ignore[attr-defined]
+
+            worker_ckpt_paths = [str(tmp / f"worker_{i}.npz") for i in range(n)]
+
+            algo_module = type(algo).__module__
+            algo_class  = type(algo).__name__
+
+            futures: dict = {}
+            with concurrent.futures.ProcessPoolExecutor(max_workers=n) as executor:
+                for i in range(n):
+                    seed = (i + 1) * 1_000
+                    f = executor.submit(
+                        _parallel_train_worker,
+                        algo_module,
+                        algo_class,
+                        base_ckpt_path,
+                        total_games,
+                        worker_ckpt_paths[i],
+                        seed,
+                    )
+                    futures[f] = i
+
+            # Collect results.
+            results: list = []
+            for f, worker_idx in futures.items():
+                try:
+                    result = f.result()
+                    results.append((result["mean_score"], worker_idx, worker_ckpt_paths[worker_idx], result))
+                    if self._verbose:
+                        print(
+                            f"  worker {worker_idx}: "
+                            f"mean_score={result['mean_score']:.0f}  "
+                            f"max_score={result['max_score']}"
+                        )
+                except Exception as exc:  # noqa: BLE001
+                    if self._verbose:
+                        print(f"  worker {worker_idx} failed: {exc}")
+
+            if not results:
+                # All workers failed — fall back to sequential training.
+                if self._verbose:
+                    print("  All parallel workers failed; falling back to sequential training.")
+                return self._sequential_train(total_games)
+
+            # Pick the best worker.
+            best_score, best_idx, best_ckpt, best_result = max(results, key=lambda x: x[0])
+            if self._verbose:
+                print(f"\n  Best worker: {best_idx} (mean_score={best_score:.0f})")
+
+            # Load the best worker's checkpoint into the main algorithm.
+            if Path(best_ckpt).exists():
+                algo.load_checkpoint(best_ckpt)  # type: ignore[attr-defined]
+
+        elapsed = time.perf_counter() - t0
+
+        # Optionally save to the configured checkpoint directory.
+        if self._ckpt_dir is not None and hasattr(algo, "save_checkpoint"):
+            algo.save_checkpoint(self._ckpt_dir / "checkpoint.npz")  # type: ignore[attr-defined]
+
+        if self._verbose:
+            print(
+                f"\n  Parallel training complete — "
+                f"{n} workers × {total_games} games in {elapsed:.1f}s  "
+                f"best mean_score={best_score:.0f}"
+            )
+
+        summary = {
+            "total_games":      total_games,
+            "mean_score":       best_result["mean_score"],
+            "max_score":        best_result["max_score"],
+            "max_tile":         best_result["max_tile"],
+            "total_steps":      best_result["total_steps"],
+            "elapsed_s":        round(elapsed, 2),
+            "best_eval_score":  float("nan"),
+            "n_workers":        n,
+            "best_worker":      best_idx,
+        }
+
+        if self._logger is not None:
+            self._logger.log("summary/mean_score",   summary["mean_score"],  total_games)
+            self._logger.log("summary/max_score",    float(summary["max_score"]), total_games)
+            self._logger.close()
+
+        return summary
+
 
 # ---------------------------------------------------------------------------
 # Convenience factory
@@ -525,6 +762,7 @@ def make_trainer(
     eval_freq: int = 50,
     n_eval_games: int = 20,
     verbose: bool = True,
+    n_workers: int = 1,
 ) -> RLTrainer:
     """Build an :class:`RLTrainer` with a pre-wired :class:`EvalCallback`.
 
@@ -543,6 +781,9 @@ def make_trainer(
         Number of games per evaluation round.
     verbose:
         Print progress to stdout.
+    n_workers:
+        Number of independent parallel training workers (default: 1 = sequential).
+        See :class:`RLTrainer` for details.
 
     Returns
     -------
@@ -575,4 +816,5 @@ def make_trainer(
         tensorboard_dir=tensorboard_dir,
         eval_callback=eval_cb,
         verbose=verbose,
+        n_workers=n_workers,
     )

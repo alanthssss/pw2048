@@ -537,3 +537,177 @@ class TestMakeTrainer:
         trainer.train(total_games=4)
         assert trainer._eval_cb is not None
         assert trainer._eval_cb.best_mean_score > float("-inf")
+
+
+# ===========================================================================
+# GPU device detection and optional PyTorch backend
+# ===========================================================================
+
+class TestDeviceDetection:
+    """Tests for the _detect_device() helper in DQN and PPO."""
+
+    def test_dqn_detect_device_returns_none_or_str(self):
+        from src.algorithms.dqn_algo import _detect_device, _TORCH_AVAILABLE
+        result = _detect_device()
+        if _TORCH_AVAILABLE:
+            assert isinstance(result, str)
+        else:
+            assert result is None
+
+    def test_ppo_detect_device_returns_none_or_str(self):
+        from src.algorithms.ppo_algo import _detect_device, _TORCH_AVAILABLE
+        result = _detect_device()
+        if _TORCH_AVAILABLE:
+            assert isinstance(result, str)
+        else:
+            assert result is None
+
+    def test_dqn_device_numpy_forces_numpy_backend(self):
+        algo = DQNAlgorithmV3(n_pretrain_games=0, seed=0, device="numpy")
+        assert algo._use_torch is False
+
+    def test_ppo_device_numpy_forces_numpy_backend(self):
+        algo = PPOAlgorithmV3(n_pretrain_games=0, seed=0, device="numpy")
+        assert algo._use_torch is False
+
+    def test_dqn_auto_device_consistent_with_torch_availability(self):
+        """When torch is absent, auto-detection must select the numpy backend."""
+        from src.algorithms.dqn_algo import _TORCH_AVAILABLE
+        algo = DQNAlgorithmV3(n_pretrain_games=0, seed=0)
+        if not _TORCH_AVAILABLE:
+            assert algo._use_torch is False
+
+    def test_ppo_auto_device_consistent_with_torch_availability(self):
+        from src.algorithms.ppo_algo import _TORCH_AVAILABLE
+        algo = PPOAlgorithmV3(n_pretrain_games=0, seed=0)
+        if not _TORCH_AVAILABLE:
+            assert algo._use_torch is False
+
+
+class TestTorchBackend:
+    """Tests for the optional PyTorch compute backend (skipped when torch absent)."""
+
+    @staticmethod
+    def _skip_if_no_torch():
+        from src.algorithms.dqn_algo import _TORCH_AVAILABLE
+        if not _TORCH_AVAILABLE:
+            import pytest
+            pytest.skip("PyTorch not installed")
+
+    def test_dqn_cpu_device_uses_torch_backend(self):
+        self._skip_if_no_torch()
+        algo = DQNAlgorithmV3(n_pretrain_games=0, seed=0, device="cpu")
+        assert algo._use_torch is True
+
+    def test_dqn_torch_predict_returns_valid_direction(self):
+        self._skip_if_no_torch()
+        algo = DQNAlgorithmV3(n_pretrain_games=0, seed=0, device="cpu")
+        board = [[2,4,8,16],[32,64,128,256],[2,4,8,16],[32,64,0,0]]
+        assert algo.predict(board) in DIRECTIONS
+
+    def test_dqn_torch_choose_move_returns_valid_direction(self):
+        self._skip_if_no_torch()
+        algo = DQNAlgorithmV3(n_pretrain_games=0, seed=0, device="cpu")
+        board = [[2,4,8,16],[32,64,128,256],[2,4,8,16],[32,64,0,0]]
+        algo.on_game_start()
+        assert algo.choose_move(board) in DIRECTIONS
+
+    def test_dqn_torch_checkpoint_roundtrip(self, tmp_path):
+        self._skip_if_no_torch()
+        algo1 = DQNAlgorithmV3(n_pretrain_games=0, seed=0, device="cpu")
+        ckpt = tmp_path / "dqn_cpu.npz"
+        algo1.save_checkpoint(ckpt)
+        algo2 = DQNAlgorithmV3(n_pretrain_games=0, seed=99, device="cpu")
+        algo2.load_checkpoint(ckpt)
+        board = [[2,4,8,16],[32,64,128,256],[2,4,8,16],[32,64,0,0]]
+        assert algo1.predict(board) == algo2.predict(board)
+
+    def test_ppo_cpu_device_uses_torch_backend(self):
+        self._skip_if_no_torch()
+        algo = PPOAlgorithmV3(n_pretrain_games=0, seed=0, device="cpu")
+        assert algo._use_torch is True
+
+    def test_ppo_torch_predict_returns_valid_direction(self):
+        self._skip_if_no_torch()
+        algo = PPOAlgorithmV3(n_pretrain_games=0, seed=0, device="cpu")
+        board = [[2,4,8,16],[32,64,128,256],[2,4,8,16],[32,64,0,0]]
+        assert algo.predict(board) in DIRECTIONS
+
+    def test_ppo_torch_checkpoint_roundtrip(self, tmp_path):
+        self._skip_if_no_torch()
+        algo1 = PPOAlgorithmV3(n_pretrain_games=0, seed=0, device="cpu")
+        ckpt = tmp_path / "ppo_cpu.npz"
+        algo1.save_checkpoint(ckpt)
+        algo2 = PPOAlgorithmV3(n_pretrain_games=0, seed=99, device="cpu")
+        algo2.load_checkpoint(ckpt)
+        board = [[2,4,8,16],[32,64,128,256],[2,4,8,16],[32,64,0,0]]
+        assert algo1.predict(board) == algo2.predict(board)
+
+    def test_dqn_torch_trains_without_error(self):
+        self._skip_if_no_torch()
+        algo = DQNAlgorithmV3(n_pretrain_games=0, seed=0, device="cpu")
+        trainer = RLTrainer(algorithm=algo, verbose=False)
+        summary = trainer.train(total_games=3)
+        assert summary["total_games"] == 3
+
+    def test_ppo_torch_trains_without_error(self):
+        self._skip_if_no_torch()
+        algo = PPOAlgorithmV3(n_pretrain_games=0, seed=0, device="cpu", update_freq=4, n_epochs=1)
+        trainer = RLTrainer(algorithm=algo, verbose=False)
+        summary = trainer.train(total_games=3)
+        assert summary["total_games"] == 3
+
+    def test_cross_backend_checkpoint_compatibility(self, tmp_path):
+        """Checkpoint saved by numpy backend can be loaded by torch backend."""
+        self._skip_if_no_torch()
+        numpy_algo = DQNAlgorithmV3(n_pretrain_games=0, seed=0, device="numpy")
+        ckpt = tmp_path / "cross.npz"
+        numpy_algo.save_checkpoint(ckpt)
+        torch_algo = DQNAlgorithmV3(n_pretrain_games=0, seed=99, device="cpu")
+        torch_algo.load_checkpoint(ckpt)
+        board = [[2,4,8,16],[32,64,128,256],[2,4,8,16],[32,64,0,0]]
+        assert numpy_algo.predict(board) == torch_algo.predict(board)
+
+
+# ===========================================================================
+# Parallel training
+# ===========================================================================
+
+class TestParallelTraining:
+    """Tests for n_workers > 1 in RLTrainer."""
+
+    def test_parallel_train_returns_summary(self, tmp_path):
+        algo = DQNAlgorithmV3(n_pretrain_games=0, seed=0, device="numpy")
+        trainer = RLTrainer(algorithm=algo, verbose=False, n_workers=2)
+        summary = trainer.train(total_games=2)
+        assert summary["total_games"] == 2
+        assert "n_workers" in summary
+        assert summary["n_workers"] == 2
+
+    def test_parallel_train_selects_best_worker(self, tmp_path):
+        algo = DQNAlgorithmV3(n_pretrain_games=0, seed=0, device="numpy")
+        trainer = RLTrainer(algorithm=algo, verbose=False, n_workers=2)
+        summary = trainer.train(total_games=2)
+        assert "best_worker" in summary
+        assert summary["best_worker"] in (0, 1)
+
+    def test_parallel_train_saves_checkpoint(self, tmp_path):
+        algo = DQNAlgorithmV3(n_pretrain_games=0, seed=0, device="numpy")
+        trainer = RLTrainer(
+            algorithm=algo, checkpoint_dir=tmp_path, verbose=False, n_workers=2
+        )
+        trainer.train(total_games=2)
+        assert (tmp_path / "checkpoint.npz").exists()
+
+    def test_make_trainer_n_workers_parameter(self):
+        algo = DQNAlgorithmV3(n_pretrain_games=0, seed=0, device="numpy")
+        trainer = make_trainer(algo, verbose=False, n_workers=2)
+        assert trainer._n_workers == 2
+
+    def test_n_workers_one_falls_back_to_sequential(self, tmp_path):
+        """n_workers=1 (default) must use the sequential path."""
+        algo = DQNAlgorithmV3(n_pretrain_games=0, seed=0, device="numpy")
+        trainer = RLTrainer(algorithm=algo, verbose=False, n_workers=1)
+        summary = trainer.train(total_games=2)
+        # Sequential training does NOT include n_workers key.
+        assert "n_workers" not in summary

@@ -5,3 +5,9 @@ boto3>=1.26.0
 argcomplete>=3.0.0
 questionary>=2.1.0
 rich>=13.0.0
+# Optional: GPU acceleration for DQN-v3 and PPO-v3 (auto-detected at runtime).
+# On Apple Silicon (M1/M2/M3) install the macOS-native build for MPS support:
+#   pip install torch
+# For CUDA GPUs:
+#   pip install torch --index-url https://download.pytorch.org/whl/cu121
+# torch is NOT required — the algorithms fall back to pure-NumPy if absent.
