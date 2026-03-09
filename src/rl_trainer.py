@@ -61,6 +61,16 @@ if TYPE_CHECKING:
 
 
 # ---------------------------------------------------------------------------
+# Public constants
+# ---------------------------------------------------------------------------
+
+#: Upper-bound game cap used when early stopping is enabled without an
+#: explicit ``--train-games`` argument (auto-training mode).  Training will
+#: stop via the early-stopping mechanism long before reaching this limit.
+AUTO_TRAIN_CAP: int = 10_000_000
+
+
+# ---------------------------------------------------------------------------
 # Parallel training worker — module-level so it is picklable by multiprocessing
 # ---------------------------------------------------------------------------
 
@@ -298,6 +308,14 @@ class EvalCallback:
 
     This is the **Eval layer** of the Env / Train / Eval / Play stack.
 
+    Early stopping
+    --------------
+    When *patience* > 0 the callback counts consecutive evaluation rounds
+    where the mean score did **not** improve by at least *min_delta*.  Once
+    that count reaches *patience*, :attr:`should_stop` is set to ``True``.
+    :class:`RLTrainer` checks this flag after every evaluation and terminates
+    the training loop early, saving device time and energy.
+
     Parameters
     ----------
     algorithm:
@@ -316,6 +334,14 @@ class EvalCallback:
         metrics are printed to stdout only.
     verbose:
         If ``True`` (default), print a summary after each evaluation.
+    patience:
+        Early stopping patience — number of consecutive evaluation rounds
+        without a meaningful improvement before training is stopped
+        automatically.  ``0`` (default) disables early stopping.
+    min_delta:
+        Minimum absolute improvement in mean eval score that resets the
+        patience counter.  Ignored when *patience* is 0.  Default: ``1.0``
+        (any improvement of at least 1 score point counts).
     """
 
     def __init__(
@@ -327,6 +353,8 @@ class EvalCallback:
         best_ckpt_path: Optional[Union[str, Path]] = None,
         logger: Optional[TrainingLogger] = None,
         verbose: bool = True,
+        patience: int = 0,
+        min_delta: float = 1.0,
     ) -> None:
         self._algo = algorithm
         self._env = eval_env
@@ -336,6 +364,10 @@ class EvalCallback:
         self._logger = logger
         self._verbose = verbose
         self._best_mean_score: float = float("-inf")
+        self._patience = max(0, int(patience))
+        self._min_delta = float(min_delta)
+        self._no_improve_count: int = 0
+        self._should_stop: bool = False
 
     # ------------------------------------------------------------------
     # Public interface
@@ -350,6 +382,20 @@ class EvalCallback:
     def best_mean_score(self) -> float:
         """Best mean evaluation score seen so far."""
         return self._best_mean_score
+
+    @property
+    def should_stop(self) -> bool:
+        """``True`` when early stopping patience has been exhausted.
+
+        Only ever becomes ``True`` when *patience* > 0 was supplied at
+        construction time.  Once set to ``True`` it stays ``True``.
+        """
+        return self._should_stop
+
+    @property
+    def no_improve_count(self) -> int:
+        """Number of consecutive evaluation rounds without meaningful improvement."""
+        return self._no_improve_count
 
     def __call__(self, game_num: int) -> Optional[dict]:
         """Run evaluation if *game_num* is a multiple of *eval_freq*.
@@ -394,13 +440,30 @@ class EvalCallback:
         max_score = float(np.max(scores))
         mean_tile = float(np.mean(max_tiles))
         max_tile = int(np.max(max_tiles))
-        is_new_best = mean_score > self._best_mean_score
+
+        # Capture old best BEFORE updating so the patience test uses the
+        # pre-update threshold.
+        old_best = self._best_mean_score
+        # is_new_best: checkpoint-saving trigger (strictly > previous best).
+        is_new_best = mean_score > old_best
 
         if is_new_best:
             self._best_mean_score = mean_score
             if self._best_path is not None and hasattr(self._algo, "save_checkpoint"):
                 self._best_path.parent.mkdir(parents=True, exist_ok=True)
                 self._algo.save_checkpoint(self._best_path)
+
+        # Early stopping: count consecutive rounds without a meaningful improvement.
+        # "Meaningful" means the new score beats the old best by at least min_delta.
+        # Using old_best (pre-update) so the threshold is stable within the round.
+        if self._patience > 0:
+            meaningful = mean_score >= old_best + self._min_delta
+            if meaningful:
+                self._no_improve_count = 0
+            else:
+                self._no_improve_count += 1
+            if self._no_improve_count >= self._patience:
+                self._should_stop = True
 
         if self._logger is not None:
             self._logger.log("eval/mean_score", mean_score, game_num)
@@ -410,11 +473,19 @@ class EvalCallback:
 
         if self._verbose:
             star = " ★ new best" if is_new_best else ""
+            # Show patience countdown when early stopping is active.
+            early_stop_info = ""
+            if self._patience > 0 and not is_new_best:
+                remaining = max(0, self._patience - self._no_improve_count)
+                early_stop_info = (
+                    f"  [no-improve {self._no_improve_count}/{self._patience}"
+                    + (f" — stopping now]" if self._should_stop else f", {remaining} left]")
+                )
             print(
                 f"  [eval @ game {game_num:>5}]  "
                 f"mean_score={mean_score:>7.0f}  "
                 f"max_score={max_score:>7.0f}  "
-                f"max_tile={max_tile:>4}{star}"
+                f"max_tile={max_tile:>4}{star}{early_stop_info}"
             )
 
         return {
@@ -424,6 +495,7 @@ class EvalCallback:
             "mean_tile": mean_tile,
             "max_tile": max_tile,
             "is_new_best": is_new_best,
+            "no_improve_count": self._no_improve_count,
         }
 
 
@@ -535,21 +607,30 @@ class RLTrainer:
     # ------------------------------------------------------------------
 
     def _sequential_train(self, total_games: int) -> dict:
-        """Original single-process training loop."""
+        """Original single-process training loop, with optional early stopping."""
         scores: List[int] = []
         max_tiles: List[int] = []
         t0 = time.perf_counter()
         n_steps_list: List[int] = []
+        stopped_early = False
+        games_played = 0
 
         for game_num in range(1, total_games + 1):
             result = self._run_episode()
             scores.append(result["score"])
             max_tiles.append(result["max_tile"])
             n_steps_list.append(result["n_steps"])
+            games_played = game_num
 
             if self._verbose and (game_num % 50 == 0 or game_num == 1):
+                # When total_games is very large (e.g. auto-mode cap), omit the
+                # "/total_games" part since it's not a meaningful upper bound.
+                if total_games >= AUTO_TRAIN_CAP:
+                    game_label = f"{game_num:>6}"
+                else:
+                    game_label = f"{game_num:>5}/{total_games}"
                 print(
-                    f"  [train] game {game_num:>5}/{total_games}  "
+                    f"  [train] game {game_label}  "
                     f"score={result['score']:>6}  "
                     f"max_tile={result['max_tile']:>4}  "
                     f"steps={result['n_steps']:>4}"
@@ -568,6 +649,10 @@ class RLTrainer:
                 self._eval_cb(game_num)
                 if self._logger is not None:
                     self._logger.flush()
+                # Early stopping: halt if EvalCallback exhausted its patience.
+                if self._eval_cb.should_stop:
+                    stopped_early = True
+                    break
 
             # Latest checkpoint.
             if self._ckpt_dir is not None and hasattr(self._algo, "save_checkpoint"):
@@ -578,7 +663,7 @@ class RLTrainer:
         mean_score = float(np.mean(scores)) if scores else 0.0
 
         summary = {
-            "total_games": total_games,
+            "total_games": games_played,
             "mean_score": mean_score,
             "max_score": int(np.max(scores)) if scores else 0,
             "max_tile": int(np.max(max_tiles)) if max_tiles else 0,
@@ -587,16 +672,21 @@ class RLTrainer:
             "best_eval_score": (
                 self._eval_cb.best_mean_score if self._eval_cb else float("nan")
             ),
+            "stopped_early": stopped_early,
         }
 
         if self._logger is not None:
-            self._logger.log("summary/mean_score",    summary["mean_score"],    total_games)
-            self._logger.log("summary/max_score",     float(summary["max_score"]),  total_games)
+            self._logger.log("summary/mean_score",    summary["mean_score"],    games_played)
+            self._logger.log("summary/max_score",     float(summary["max_score"]),  games_played)
             self._logger.close()
 
         if self._verbose:
+            stop_reason = (
+                "early stopped (plateau)" if stopped_early
+                else f"{games_played} games"
+            )
             print(
-                f"\n  Training complete — {total_games} games in {elapsed:.1f}s  "
+                f"\n  Training complete — {stop_reason} in {elapsed:.1f}s  "
                 f"mean_score={mean_score:.0f}  "
                 f"max_score={summary['max_score']}"
             )
@@ -775,6 +865,8 @@ def make_trainer(
     n_eval_games: int = 20,
     verbose: bool = True,
     n_workers: int = 1,
+    patience: int = 0,
+    min_delta: float = 1.0,
 ) -> RLTrainer:
     """Build an :class:`RLTrainer` with a pre-wired :class:`EvalCallback`.
 
@@ -796,6 +888,13 @@ def make_trainer(
     n_workers:
         Number of independent parallel training workers (default: 1 = sequential).
         See :class:`RLTrainer` for details.
+    patience:
+        Early stopping patience — number of consecutive evaluation rounds
+        without meaningful improvement before training stops automatically.
+        ``0`` (default) disables early stopping.
+    min_delta:
+        Minimum improvement in mean eval score to reset the patience counter.
+        Default ``1.0``.
 
     Returns
     -------
@@ -820,6 +919,8 @@ def make_trainer(
         best_ckpt_path=best_ckpt,
         logger=logger,
         verbose=verbose,
+        patience=patience,
+        min_delta=min_delta,
     )
 
     return RLTrainer(

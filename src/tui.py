@@ -172,12 +172,15 @@ def run_tui() -> list[str]:
     eval_freq_str = "50"
     n_eval_games_str = "20"
     tensorboard_dir = ""
+    early_stopping_patience_str = "0"
+    early_stopping_min_delta_str = "1"
     if _is_rl:
         _console.print(
             "\n[dim]── RL Training (DQN / PPO only) ──[/]\n",
         )
         train_games_str = questionary.text(
-            "Fast training games — in-process, no browser (0 = skip):",
+            "Fast training games — in-process, no browser\n"
+            "  (0 = skip training, or auto-stop if patience > 0):",
             default="0",
             validate=_non_neg_int,
             style=_STYLE,
@@ -210,6 +213,47 @@ def run_tui() -> list[str]:
                 style=_STYLE,
             ).ask()
             if tensorboard_dir is None:
+                raise SystemExit(0)
+
+        # Early stopping (shown whenever RL is active, even for auto mode).
+        _console.print(
+            "\n[dim]── Early stopping (optional) ──[/]\n"
+            "[dim]Stops training automatically when score stops improving.[/]\n"
+        )
+        early_stopping_patience_str = questionary.text(
+            "Early-stopping patience (eval rounds without improvement, 0 = off):",
+            default="0",
+            validate=_non_neg_int,
+            style=_STYLE,
+        ).ask()
+        if early_stopping_patience_str is None:
+            raise SystemExit(0)
+
+        if int(early_stopping_patience_str) > 0:
+            # When user chose auto mode (train_games=0), show eval_freq prompt.
+            if int(train_games_str) == 0:
+                eval_freq_str = questionary.text(
+                    "Eval frequency — run EvalCallback every N games:",
+                    default="50",
+                    validate=_pos_int,
+                    style=_STYLE,
+                ).ask()
+                if eval_freq_str is None:
+                    raise SystemExit(0)
+                n_eval_games_str = questionary.text(
+                    "Eval games per round:",
+                    default="20",
+                    validate=_pos_int,
+                    style=_STYLE,
+                ).ask()
+                if n_eval_games_str is None:
+                    raise SystemExit(0)
+            early_stopping_min_delta_str = questionary.text(
+                "Min score improvement to reset patience counter:",
+                default="1",
+                style=_STYLE,
+            ).ask()
+            if early_stopping_min_delta_str is None:
                 raise SystemExit(0)
 
     # ── Misc options ──────────────────────────────────────────────────────────
@@ -262,6 +306,7 @@ def run_tui() -> list[str]:
             f"{mode_choice}  ({p['games']} games × {p['runs']} run(s), auto parallel)",
         )
     table.add_row("Output dir", output + "/")
+    _es_patience = int(early_stopping_patience_str)
     if _is_rl and int(train_games_str) > 0:
         table.add_row("Train games", train_games_str)
         table.add_row("Eval freq", eval_freq_str)
@@ -270,6 +315,12 @@ def run_tui() -> list[str]:
             "TensorBoard dir",
             tensorboard_dir.strip() + "/" if tensorboard_dir.strip() else "–",
         )
+    elif _is_rl and _es_patience > 0:
+        table.add_row("Train mode", "auto (train until stable)")
+        table.add_row("Eval freq", eval_freq_str)
+        table.add_row("Eval games", n_eval_games_str)
+    if _is_rl and _es_patience > 0:
+        table.add_row("Early stopping", f"patience={_es_patience}, min_delta={early_stopping_min_delta_str}")
     table.add_row("Show browser", "yes" if show else "no")
     table.add_row("Keep N runs", keep_str)
     table.add_row("HTML report", "yes" if report else "no")
@@ -298,6 +349,12 @@ def run_tui() -> list[str]:
         argv += ["--n-eval-games", n_eval_games_str]
         if tensorboard_dir.strip():
             argv += ["--tensorboard-dir", tensorboard_dir.strip()]
+
+    if _is_rl and _es_patience > 0:
+        argv += ["--early-stopping-patience", early_stopping_patience_str]
+        argv += ["--early-stopping-min-delta", early_stopping_min_delta_str]
+        argv += ["--eval-freq", eval_freq_str]
+        argv += ["--n-eval-games", n_eval_games_str]
 
     if mode_choice != "custom":
         argv += ["--mode", mode_choice]

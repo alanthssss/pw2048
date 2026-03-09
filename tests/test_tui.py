@@ -36,6 +36,9 @@ def _mock_answers(**overrides):
         "eval_freq": "50",
         "n_eval_games": "20",
         "tensorboard_dir": "",
+        # Early stopping (DQN/PPO only)
+        "early_stopping_patience": "0",
+        "early_stopping_min_delta": "1",
     }
     defaults.update(overrides)
     return defaults
@@ -84,6 +87,10 @@ def _patch_tui(answers: dict):
                 m.ask.return_value = answers["n_eval_games"]
             elif "tensorboard" in prompt_lower:
                 m.ask.return_value = answers["tensorboard_dir"]
+            elif "early-stopping patience" in prompt_lower or "patience" in prompt_lower:
+                m.ask.return_value = answers.get("early_stopping_patience", "0")
+            elif "min score improvement" in prompt_lower or "min_delta" in prompt_lower or "min improvement" in prompt_lower:
+                m.ask.return_value = answers.get("early_stopping_min_delta", "1")
             elif "keep" in prompt_lower:
                 m.ask.return_value = answers["keep_str"]
             else:

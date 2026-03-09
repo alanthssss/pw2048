@@ -126,6 +126,21 @@ Examples
     # Combine GPU + parallel workers for maximum speed on M1:
     python main.py --algorithm dqn --train-games 10000 --train-workers 4 \\
                    --checkpoint-dir checkpoints --games 0
+
+    # --- Auto-training: train until stable (early stopping) ---
+    # Don't know how many games to train?  Use --early-stopping-patience.
+    # Training stops automatically when eval score hasn't improved for
+    # N consecutive eval rounds (N × eval_freq games).
+    python main.py --algorithm dqn --early-stopping-patience 10 \\
+                   --eval-freq 50 --checkpoint-dir checkpoints --games 0
+    # → stops after at most 10 M games OR when score plateaus for 500 games.
+
+    # Combine auto-stopping with an explicit upper bound:
+    python main.py --algorithm dqn --train-games 50000 \\
+                   --early-stopping-patience 5 --eval-freq 100 \\
+                   --checkpoint-dir checkpoints --games 0
+    # → stops at 50 000 games OR when score hasn't improved for 500 games,
+    #   whichever comes first.
 """
 
 from __future__ import annotations
@@ -147,6 +162,7 @@ from src.algorithms.heuristic_algo import HeuristicAlgorithm
 from src.algorithms.mcts_algo import MCTSAlgorithmV1, MCTSAlgorithmV2
 from src.algorithms.ppo_algo import PPOAlgorithmV1, PPOAlgorithmV2, PPOAlgorithmV3
 from src.algorithms.random_algo import RandomAlgorithm
+from src.rl_trainer import AUTO_TRAIN_CAP as _AUTO_TRAIN_CAP
 from src.runner import run_games
 from src.visualize import plot_results
 
@@ -613,6 +629,37 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "Only valid for learning algorithms that support checkpoints (dqn, ppo)."
         ),
     )
+    parser.add_argument(
+        "--early-stopping-patience",
+        type=int,
+        default=0,
+        metavar="N",
+        dest="early_stopping_patience",
+        help=(
+            "Stop training automatically when the eval mean score has not "
+            "improved by at least --early-stopping-min-delta for N consecutive "
+            "EvalCallback rounds (default: 0 = disabled).  "
+            "Combine with a large --train-games value (or omit --train-games "
+            "entirely) to let the algorithm train until it plateaus instead of "
+            "guessing how many games to run.  "
+            "Example: --train-games 1000000 --early-stopping-patience 10 "
+            "--eval-freq 50 stops after at most 1 M games or when performance "
+            "has not improved over the last 500 training games (10 × 50)."
+        ),
+    )
+    parser.add_argument(
+        "--early-stopping-min-delta",
+        type=float,
+        default=1.0,
+        metavar="DELTA",
+        dest="early_stopping_min_delta",
+        help=(
+            "Minimum absolute improvement in mean eval score required to reset "
+            "the early-stopping patience counter (default: 1.0).  "
+            "E.g. 0.0 means any improvement counts; 100.0 requires a 100-point "
+            "jump.  Only relevant when --early-stopping-patience > 0."
+        ),
+    )
 
     argcomplete.autocomplete(parser)
     args = parser.parse_args(argv)
@@ -634,6 +681,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         args.runs = _DEFAULT_RUNS
     if args.parallel is None:
         args.parallel = _DEFAULT_PARALLEL
+
+    # Auto-mode: when early stopping is requested but --train-games was not
+    # explicitly given, use a large cap so training effectively runs "until
+    # stable" and terminates via the early-stopping mechanism instead of
+    # hitting an explicit game count.
+    if (
+        args.early_stopping_patience > 0
+        and not args.train_games
+        and getattr(ALGORITHMS.get(args.algorithm, object), "supports_checkpoint", False)
+    ):
+        args.train_games = _AUTO_TRAIN_CAP
 
     return args
 
@@ -701,10 +759,26 @@ def main(argv: list[str] | None = None) -> None:
             else None
         )
 
-        print(
-            f"\nFast in-process training: {args.train_games} game(s) with "
-            f"'{algorithm.name}'…"
-        )
+        patience = args.early_stopping_patience
+        min_delta = args.early_stopping_min_delta
+        auto_mode = patience > 0 and args.train_games >= _AUTO_TRAIN_CAP
+
+        if auto_mode:
+            print(
+                f"\nAuto training (train until stable): '{algorithm.name}'  "
+                f"patience={patience} eval rounds × {args.eval_freq} games = "
+                f"{patience * args.eval_freq:,} games of no improvement → stop"
+            )
+        else:
+            print(
+                f"\nFast in-process training: {args.train_games} game(s) with "
+                f"'{algorithm.name}'…"
+            )
+        if patience > 0:
+            print(
+                f"  Early stopping: patience={patience} eval round(s) without "
+                f"improvement ≥{min_delta:.0f} points (eval freq={args.eval_freq})"
+            )
         if tb_dir:
             print(f"  TensorBoard / CSV logs → {tb_dir}")
         if ckpt_dir_for_trainer:
@@ -723,6 +797,8 @@ def main(argv: list[str] | None = None) -> None:
             n_eval_games=args.n_eval_games,
             verbose=True,
             n_workers=args.train_workers,
+            patience=patience,
+            min_delta=min_delta,
         )
         trainer.train(total_games=args.train_games)
 

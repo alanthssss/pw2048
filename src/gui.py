@@ -50,6 +50,8 @@ def _build_argv(
     eval_freq: str = str(_DEFAULT_EVAL_FREQ),
     n_eval_games: str = str(_DEFAULT_N_EVAL_GAMES),
     tensorboard_dir: str = "",
+    early_stopping_patience: str = "0",
+    early_stopping_min_delta: str = "1",
 ) -> list[str]:
     """Convert GUI form values to an argv list for :func:`main.parse_args`.
 
@@ -75,13 +77,20 @@ def _build_argv(
     version:
         Optional algorithm version tag override.  Empty string → omit flag.
     train_games:
-        Number of fast in-process training games (``"0"`` → omit flag).
+        Number of fast in-process training games (``"0"`` → auto-stop mode
+        when *early_stopping_patience* > 0, else skip).
     eval_freq:
-        EvalCallback frequency used when *train_games* > 0.
+        EvalCallback frequency used when *train_games* > 0 or early stopping
+        is active.
     n_eval_games:
         Number of eval games per EvalCallback round.
     tensorboard_dir:
         TensorBoard / CSV log directory.  Empty string → omit flag.
+    early_stopping_patience:
+        Number of consecutive eval rounds without improvement before auto-stop
+        (``"0"`` → disabled).
+    early_stopping_min_delta:
+        Minimum score improvement to reset the patience counter.
 
     Returns
     -------
@@ -95,14 +104,26 @@ def _build_argv(
     ]
     if version.strip():
         argv += ["--algo-version", version.strip()]
-    if train_games.strip() and int(train_games.strip()) > 0:
+    _es_patience = int(early_stopping_patience.strip() or "0")
+    _ef = eval_freq.strip() or str(_DEFAULT_EVAL_FREQ)
+    _neg = n_eval_games.strip() or str(_DEFAULT_N_EVAL_GAMES)
+    _train_games_active = bool(train_games.strip() and int(train_games.strip()) > 0)
+    if _train_games_active:
         argv += [
             "--train-games", train_games.strip(),
-            "--eval-freq", eval_freq.strip() or str(_DEFAULT_EVAL_FREQ),
-            "--n-eval-games", n_eval_games.strip() or str(_DEFAULT_N_EVAL_GAMES),
+            "--eval-freq", _ef,
+            "--n-eval-games", _neg,
         ]
         if tensorboard_dir.strip():
             argv += ["--tensorboard-dir", tensorboard_dir.strip()]
+    if _es_patience > 0:
+        argv += [
+            "--early-stopping-patience", str(_es_patience),
+            "--early-stopping-min-delta", early_stopping_min_delta.strip() or "1",
+        ]
+        # Only add eval-freq / n-eval-games if not already added by train_games block.
+        if not _train_games_active:
+            argv += ["--eval-freq", _ef, "--n-eval-games", _neg]
     if mode_choice != "custom":
         argv += ["--mode", mode_choice]
     else:
@@ -323,6 +344,34 @@ def run_gui() -> list[str]:
 
     _sep()
 
+    # ── Early stopping (DQN / PPO only) ──────────────────────────────────
+    ttk.Label(outer, text="Early stopping (DQN / PPO only)", font=("", 9, "italic")).grid(
+        row=row, column=0, columnspan=3, sticky="w", **PAD
+    )
+    row += 1
+
+    _label("Patience (eval rounds):")
+    patience_var = tk.StringVar(value="0")
+    ttk.Entry(outer, textvariable=patience_var, width=8).grid(
+        row=row, column=1, sticky="w", **PAD
+    )
+    ttk.Label(outer, text="(0 = off; auto-stop when score plateaus)", font=("", 8, "italic")).grid(
+        row=row, column=2, sticky="w", **PAD
+    )
+    row += 1
+
+    _label("Min score delta:")
+    min_delta_var = tk.StringVar(value="1")
+    ttk.Entry(outer, textvariable=min_delta_var, width=8).grid(
+        row=row, column=1, sticky="w", **PAD
+    )
+    ttk.Label(outer, text="(min improvement to reset patience)", font=("", 8, "italic")).grid(
+        row=row, column=2, sticky="w", **PAD
+    )
+    row += 1
+
+    _sep()
+
     # ── Misc options ──────────────────────────────────────────────────────
     _label("Show browser:")
     show_var = tk.BooleanVar(value=False)
@@ -377,6 +426,7 @@ def run_gui() -> list[str]:
             ("Train games", train_games_var),
             ("Eval freq", eval_freq_var),
             ("Eval games", n_eval_games_var),
+            ("Patience", patience_var),
         ]:
             val = var.get().strip()
             if not val.isdigit():
@@ -398,6 +448,8 @@ def run_gui() -> list[str]:
             eval_freq=eval_freq_var.get().strip(),
             n_eval_games=n_eval_games_var.get().strip(),
             tensorboard_dir=tensorboard_var.get().strip(),
+            early_stopping_patience=patience_var.get().strip(),
+            early_stopping_min_delta=min_delta_var.get().strip(),
         )
         result.append(argv)
         root.destroy()

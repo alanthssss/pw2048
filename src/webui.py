@@ -75,16 +75,29 @@ def _form_to_argv(form: dict[str, list[str]]) -> list[str]:
     if algo_version:
         argv += ["--algo-version", algo_version]
 
+    eval_freq = _get("eval_freq", str(_DEFAULT_EVAL_FREQ)).strip() or str(_DEFAULT_EVAL_FREQ)
+    n_eval_games = _get("n_eval_games", str(_DEFAULT_N_EVAL_GAMES)).strip() or str(_DEFAULT_N_EVAL_GAMES)
+    es_patience = _get("early_stopping_patience", "0").strip()
+
     train_games = _get("train_games", "0").strip()
     if train_games and int(train_games) > 0:
         argv += [
             "--train-games", train_games,
-            "--eval-freq", _get("eval_freq", str(_DEFAULT_EVAL_FREQ)).strip() or str(_DEFAULT_EVAL_FREQ),
-            "--n-eval-games", _get("n_eval_games", str(_DEFAULT_N_EVAL_GAMES)).strip() or str(_DEFAULT_N_EVAL_GAMES),
+            "--eval-freq", eval_freq,
+            "--n-eval-games", n_eval_games,
         ]
         tensorboard_dir = _get("tensorboard_dir", "").strip()
         if tensorboard_dir:
             argv += ["--tensorboard-dir", tensorboard_dir]
+
+    if es_patience and int(es_patience) > 0:
+        argv += [
+            "--early-stopping-patience", es_patience,
+            "--early-stopping-min-delta", _get("early_stopping_min_delta", "1").strip() or "1",
+        ]
+        # Only add eval-freq / n-eval-games if not already added by train_games block.
+        if not (train_games and int(train_games) > 0):
+            argv += ["--eval-freq", eval_freq, "--n-eval-games", n_eval_games]
 
     if mode_choice != "custom":
         argv += ["--mode", mode_choice]

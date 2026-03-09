@@ -711,3 +711,157 @@ class TestParallelTraining:
         summary = trainer.train(total_games=2)
         # Sequential training does NOT include n_workers key.
         assert "n_workers" not in summary
+
+
+# ===========================================================================
+# Early stopping
+# ===========================================================================
+
+class TestEarlyStoppingCallback:
+    """Tests for EvalCallback early stopping (patience + min_delta)."""
+
+    def _make_algo(self):
+        return DQNAlgorithmV3(n_pretrain_games=0, seed=0, device="numpy")
+
+    def test_patience_zero_disables_early_stopping(self):
+        """patience=0 must never set should_stop."""
+        algo = self._make_algo()
+        eval_env = Game2048Env(seed=1)
+        cb = EvalCallback(
+            algo, eval_env, eval_freq=1, n_eval_games=2, verbose=False, patience=0
+        )
+        for i in range(1, 20):
+            cb(i)
+        assert cb.should_stop is False
+
+    def test_patience_triggers_after_n_non_improving_rounds(self):
+        """should_stop becomes True exactly after patience rounds without improvement."""
+        algo = self._make_algo()
+        eval_env = Game2048Env(seed=42)
+        cb = EvalCallback(
+            algo, eval_env, eval_freq=1, n_eval_games=2, verbose=False,
+            patience=3, min_delta=0.0,
+        )
+        # Force first eval to establish best_mean_score, then pin it to a
+        # very high value so subsequent real evals never beat old_best+min_delta.
+        cb(1)
+        cb._best_mean_score = 1e12   # subsequent evals cannot surpass this
+        assert cb.should_stop is False, "Should not stop after first eval"
+        # After 3 more rounds without improvement patience should be exhausted.
+        cb(2)
+        cb(3)
+        assert cb.should_stop is False, "Should not stop before patience rounds"
+        cb(4)
+        assert cb.should_stop is True, "Should stop after patience rounds"
+
+    def test_patience_resets_on_improvement(self):
+        """When score genuinely improves, the counter should reset."""
+        algo = self._make_algo()
+        eval_env = Game2048Env(seed=7)
+        cb = EvalCallback(
+            algo, eval_env, eval_freq=1, n_eval_games=2, verbose=False,
+            patience=2, min_delta=0.0,  # any improvement resets counter
+        )
+        # Establish best.
+        cb(1)
+        # Non-improving round (pin best to a high value so real evals don't improve).
+        cb._best_mean_score = 1e12
+        cb(2)
+        assert cb.no_improve_count == 1
+        # Simulate improvement by resetting best_mean_score to a low value.
+        cb._best_mean_score = -1.0  # next eval will beat this
+        cb(3)
+        assert cb.no_improve_count == 0, "Counter must reset on improvement"
+        assert cb.should_stop is False
+
+    def test_no_improve_count_property(self):
+        """no_improve_count increments correctly."""
+        algo = self._make_algo()
+        eval_env = Game2048Env(seed=3)
+        cb = EvalCallback(
+            algo, eval_env, eval_freq=1, n_eval_games=2, verbose=False,
+            patience=5, min_delta=0.0,
+        )
+        cb(1)  # sets best
+        cb._best_mean_score = 1e12  # pin so subsequent rounds never improve
+        for i in range(2, 6):
+            cb(i)
+        assert cb.no_improve_count == 4
+
+    def test_trainer_stops_early_when_patience_exhausted(self):
+        """RLTrainer must exit before total_games when should_stop fires."""
+        algo = self._make_algo()
+        eval_env = Game2048Env(seed=0)
+        cb = EvalCallback(
+            algo, eval_env,
+            eval_freq=2,
+            n_eval_games=2,
+            verbose=False,
+            patience=2,
+            min_delta=0.0,
+        )
+        # Pin best_mean_score after first eval by overriding the method;
+        # all subsequent evals won't improve → patience exhausts quickly.
+        original_run_eval = cb._run_eval
+        call_count = [0]
+        def _patched_run_eval(game_num: int) -> dict:
+            result = original_run_eval(game_num)
+            call_count[0] += 1
+            if call_count[0] >= 1:
+                cb._best_mean_score = 1e12  # pin after first eval
+            return result
+        cb._run_eval = _patched_run_eval
+        trainer = RLTrainer(algorithm=algo, eval_callback=cb, verbose=False)
+        summary = trainer.train(total_games=1000)
+        assert summary["stopped_early"] is True
+        assert summary["total_games"] < 1000
+
+    def test_trainer_does_not_stop_early_when_patience_zero(self):
+        """RLTrainer must play all games when patience=0 (default)."""
+        algo = self._make_algo()
+        trainer = RLTrainer(algorithm=algo, verbose=False)
+        summary = trainer.train(total_games=5)
+        assert summary["stopped_early"] is False
+        assert summary["total_games"] == 5
+
+    def test_make_trainer_patience_wired(self):
+        """make_trainer passes patience + min_delta through to EvalCallback."""
+        algo = self._make_algo()
+        trainer = make_trainer(algo, verbose=False, patience=3, min_delta=50.0)
+        assert trainer._eval_cb is not None
+        assert trainer._eval_cb._patience == 3
+        assert trainer._eval_cb._min_delta == 50.0
+
+    def test_summary_stopped_early_key_always_present(self):
+        """Summary dict must always contain 'stopped_early' key."""
+        algo = self._make_algo()
+        trainer = RLTrainer(algorithm=algo, verbose=False)
+        summary = trainer.train(total_games=2)
+        assert "stopped_early" in summary
+
+    def test_early_stop_saves_best_checkpoint(self, tmp_path):
+        """Best checkpoint must be saved even when training stopped early."""
+        algo = self._make_algo()
+        eval_env = Game2048Env(seed=0)
+        best_ckpt = tmp_path / "best.npz"
+        cb = EvalCallback(
+            algo, eval_env,
+            eval_freq=2, n_eval_games=2,
+            best_ckpt_path=best_ckpt,
+            verbose=False,
+            patience=2, min_delta=0.0,
+        )
+        # Pin best after first eval so patience exhausts quickly.
+        original_run_eval = cb._run_eval
+        called = [False]
+        def _pin_after_first(game_num: int) -> dict:
+            result = original_run_eval(game_num)
+            if not called[0]:
+                called[0] = True
+                cb._best_mean_score = 1e12
+            return result
+        cb._run_eval = _pin_after_first
+        trainer = RLTrainer(algorithm=algo, eval_callback=cb, verbose=False)
+        trainer.train(total_games=200)
+        # best_checkpoint.npz should exist (first eval is always a new best).
+        assert best_ckpt.exists()
