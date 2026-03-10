@@ -247,7 +247,7 @@
     <div class="rl-section" id="rl-section" style="display:none">
       <div class="rl-section-title">&#9889; RL Training (DQN / PPO only)</div>
       <div class="field">
-        <label for="train_games">Fast training games <span class="field-hint">(in-process, no browser — 0 to skip)</span></label>
+        <label for="train_games">Fast training games <span class="field-hint">(in-process, no browser — 0 = skip, or auto-stop if patience &gt; 0)</span></label>
         <input type="number" id="train_games" name="train_games" value="0" min="0">
       </div>
       <div class="two-col">
@@ -264,6 +264,23 @@
         <label for="tensorboard_dir">TensorBoard / CSV log directory <span class="field-hint">(optional — leave blank to disable)</span></label>
         <input type="text" id="tensorboard_dir" name="tensorboard_dir"
                placeholder="e.g. tb_logs">
+      </div>
+      <!-- Early stopping -->
+      <div class="rl-section-title" style="margin-top:10px;font-size:0.92em;">&#9201; Early Stopping — train until stable</div>
+      <div class="field">
+        <label for="early_stopping_patience">
+          Patience
+          <span class="field-hint">(eval rounds without improvement — 0 = off; set &gt;0 to auto-stop when score plateaus)</span>
+        </label>
+        <input type="number" id="early_stopping_patience" name="early_stopping_patience" value="0" min="0">
+      </div>
+      <div class="field" id="min-delta-row" style="display:none">
+        <label for="early_stopping_min_delta">
+          Min score improvement
+          <span class="field-hint">(resets patience counter — default 1)</span>
+        </label>
+        <input type="number" id="early_stopping_min_delta" name="early_stopping_min_delta"
+               value="1" min="0" step="1">
       </div>
     </div>
 
@@ -306,6 +323,20 @@
     document.getElementById('rl-section').style.display = isRL ? '' : 'none';
   }
 
+  function toggleMinDelta() {
+    var patience = parseInt(document.getElementById('early_stopping_patience').value, 10) || 0;
+    document.getElementById('min-delta-row').style.display = patience > 0 ? '' : 'none';
+  }
+
+  // Wire the patience input to show/hide min-delta row.
+  document.addEventListener('DOMContentLoaded', function() {
+    var patienceEl = document.getElementById('early_stopping_patience');
+    if (patienceEl) {
+      patienceEl.addEventListener('input', toggleMinDelta);
+      patienceEl.addEventListener('change', toggleMinDelta);
+    }
+  });
+
   function resetForm() {
     // Re-apply JS state after native reset clears it
     setTimeout(function() {
@@ -316,6 +347,7 @@
         b.classList.toggle('active', b.getAttribute('data-mode') === 'custom');
       });
       document.getElementById('mode-input').value = 'custom';
+      document.getElementById('min-delta-row').style.display = 'none';
     }, 0);
   }
 </script>

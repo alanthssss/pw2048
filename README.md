@@ -58,6 +58,26 @@ python main.py --algorithm dqn \
                --train-games 5000 \
                --checkpoint-dir checkpoints \
                --tensorboard-dir tb_logs
+
+# Auto-training: train until performance plateaus (no need to guess game count)
+python main.py --algorithm dqn \
+               --early-stopping-patience 10 \
+               --eval-freq 50 \
+               --checkpoint-dir checkpoints \
+               --games 0
+
+# Maximum speed: GPU + 4 parallel workers + early stopping
+python main.py --algorithm dqn \
+               --train-workers 4 \
+               --early-stopping-patience 15 \
+               --eval-freq 100 \
+               --checkpoint-dir checkpoints \
+               --tensorboard-dir tb_logs \
+               --games 0
+
+# Inspect model status after training
+python main.py --inspect-checkpoint checkpoints/DQN-v3/best_checkpoint.npz
+python main.py --training-status    tb_logs/DQN-v3
 ```
 
 ## 4-layer RL Training Pipeline
@@ -81,9 +101,15 @@ python main.py --algorithm dqn \
 python main.py --algorithm dqn --games 50 --checkpoint-dir checkpoints --report
 
 tensorboard --logdir tb_logs   # view training curves
+
+# Auto-training (early stopping) — stops when score plateaus
+python main.py --algorithm dqn \
+               --early-stopping-patience 10 --eval-freq 50 \
+               --checkpoint-dir checkpoints --games 0
 ```
 
-→ **[Full RL Training Guide](docs/rl-training.md)**
+→ **[Full RL Training Guide](docs/rl-training.md)**  
+→ **[Efficient Training Playbook — GPU / Parallel / Status](docs/efficient-training.md)**
 
 ## Roadmap
 
@@ -100,6 +126,9 @@ tensorboard --logdir tb_logs   # view training curves
 - [x] **DQN v1/v2/v3** — v3 adds BC pre-training, Adam, one-hot encoding, score reward
 - [x] **PPO v1/v2/v3** — v3 adds BC pre-training, Adam, one-hot encoding, score reward
 - [x] **4-layer Env/Train/Eval/Play** — in-process training, EvalCallback, TensorBoard
+- [x] **Early stopping** — auto-stop when score plateaus (`--early-stopping-patience`)
+- [x] **GPU acceleration** — optional PyTorch backend (Apple MPS / CUDA)
+- [x] **Parallel training** — N independent workers, best model selected (`--train-workers`)
 
 ## Project structure
 
@@ -152,6 +181,7 @@ python -m pytest tests/ -v
 | Topic | Doc |
 |---|---|
 | Getting high scores with RL, checkpoints, TensorBoard | **[docs/rl-training.md](docs/rl-training.md)** |
+| **GPU acceleration, parallel workers, early stopping, model status** | **[docs/efficient-training.md](docs/efficient-training.md)** |
 | All CLI flags, parallel mode, result layout | **[docs/cli-reference.md](docs/cli-reference.md)** |
 | TUI / GUI / Web UI wizards | **[docs/ui-wizards.md](docs/ui-wizards.md)** |
 

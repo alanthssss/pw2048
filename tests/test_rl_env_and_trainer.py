@@ -537,3 +537,331 @@ class TestMakeTrainer:
         trainer.train(total_games=4)
         assert trainer._eval_cb is not None
         assert trainer._eval_cb.best_mean_score > float("-inf")
+
+
+# ===========================================================================
+# GPU device detection and optional PyTorch backend
+# ===========================================================================
+
+class TestDeviceDetection:
+    """Tests for the _detect_device() helper in DQN and PPO."""
+
+    def test_dqn_detect_device_returns_none_or_str(self):
+        from src.algorithms.dqn_algo import _detect_device, _TORCH_AVAILABLE
+        result = _detect_device()
+        if _TORCH_AVAILABLE:
+            assert isinstance(result, str)
+        else:
+            assert result is None
+
+    def test_ppo_detect_device_returns_none_or_str(self):
+        from src.algorithms.ppo_algo import _detect_device, _TORCH_AVAILABLE
+        result = _detect_device()
+        if _TORCH_AVAILABLE:
+            assert isinstance(result, str)
+        else:
+            assert result is None
+
+    def test_dqn_device_numpy_forces_numpy_backend(self):
+        algo = DQNAlgorithmV3(n_pretrain_games=0, seed=0, device="numpy")
+        assert algo._use_torch is False
+
+    def test_ppo_device_numpy_forces_numpy_backend(self):
+        algo = PPOAlgorithmV3(n_pretrain_games=0, seed=0, device="numpy")
+        assert algo._use_torch is False
+
+    def test_dqn_auto_device_consistent_with_torch_availability(self):
+        """When torch is absent, auto-detection must select the numpy backend."""
+        from src.algorithms.dqn_algo import _TORCH_AVAILABLE
+        algo = DQNAlgorithmV3(n_pretrain_games=0, seed=0)
+        if not _TORCH_AVAILABLE:
+            assert algo._use_torch is False
+
+    def test_ppo_auto_device_consistent_with_torch_availability(self):
+        from src.algorithms.ppo_algo import _TORCH_AVAILABLE
+        algo = PPOAlgorithmV3(n_pretrain_games=0, seed=0)
+        if not _TORCH_AVAILABLE:
+            assert algo._use_torch is False
+
+
+class TestTorchBackend:
+    """Tests for the optional PyTorch compute backend (skipped when torch absent)."""
+
+    @staticmethod
+    def _skip_if_no_torch():
+        from src.algorithms.dqn_algo import _TORCH_AVAILABLE
+        if not _TORCH_AVAILABLE:
+            import pytest
+            pytest.skip("PyTorch not installed")
+
+    def test_dqn_cpu_device_uses_torch_backend(self):
+        self._skip_if_no_torch()
+        algo = DQNAlgorithmV3(n_pretrain_games=0, seed=0, device="cpu")
+        assert algo._use_torch is True
+
+    def test_dqn_torch_predict_returns_valid_direction(self):
+        self._skip_if_no_torch()
+        algo = DQNAlgorithmV3(n_pretrain_games=0, seed=0, device="cpu")
+        board = [[2,4,8,16],[32,64,128,256],[2,4,8,16],[32,64,0,0]]
+        assert algo.predict(board) in DIRECTIONS
+
+    def test_dqn_torch_choose_move_returns_valid_direction(self):
+        self._skip_if_no_torch()
+        algo = DQNAlgorithmV3(n_pretrain_games=0, seed=0, device="cpu")
+        board = [[2,4,8,16],[32,64,128,256],[2,4,8,16],[32,64,0,0]]
+        algo.on_game_start()
+        assert algo.choose_move(board) in DIRECTIONS
+
+    def test_dqn_torch_checkpoint_roundtrip(self, tmp_path):
+        self._skip_if_no_torch()
+        algo1 = DQNAlgorithmV3(n_pretrain_games=0, seed=0, device="cpu")
+        ckpt = tmp_path / "dqn_cpu.npz"
+        algo1.save_checkpoint(ckpt)
+        algo2 = DQNAlgorithmV3(n_pretrain_games=0, seed=99, device="cpu")
+        algo2.load_checkpoint(ckpt)
+        board = [[2,4,8,16],[32,64,128,256],[2,4,8,16],[32,64,0,0]]
+        assert algo1.predict(board) == algo2.predict(board)
+
+    def test_ppo_cpu_device_uses_torch_backend(self):
+        self._skip_if_no_torch()
+        algo = PPOAlgorithmV3(n_pretrain_games=0, seed=0, device="cpu")
+        assert algo._use_torch is True
+
+    def test_ppo_torch_predict_returns_valid_direction(self):
+        self._skip_if_no_torch()
+        algo = PPOAlgorithmV3(n_pretrain_games=0, seed=0, device="cpu")
+        board = [[2,4,8,16],[32,64,128,256],[2,4,8,16],[32,64,0,0]]
+        assert algo.predict(board) in DIRECTIONS
+
+    def test_ppo_torch_checkpoint_roundtrip(self, tmp_path):
+        self._skip_if_no_torch()
+        algo1 = PPOAlgorithmV3(n_pretrain_games=0, seed=0, device="cpu")
+        ckpt = tmp_path / "ppo_cpu.npz"
+        algo1.save_checkpoint(ckpt)
+        algo2 = PPOAlgorithmV3(n_pretrain_games=0, seed=99, device="cpu")
+        algo2.load_checkpoint(ckpt)
+        board = [[2,4,8,16],[32,64,128,256],[2,4,8,16],[32,64,0,0]]
+        assert algo1.predict(board) == algo2.predict(board)
+
+    def test_dqn_torch_trains_without_error(self):
+        self._skip_if_no_torch()
+        algo = DQNAlgorithmV3(n_pretrain_games=0, seed=0, device="cpu")
+        trainer = RLTrainer(algorithm=algo, verbose=False)
+        summary = trainer.train(total_games=3)
+        assert summary["total_games"] == 3
+
+    def test_ppo_torch_trains_without_error(self):
+        self._skip_if_no_torch()
+        algo = PPOAlgorithmV3(n_pretrain_games=0, seed=0, device="cpu", update_freq=4, n_epochs=1)
+        trainer = RLTrainer(algorithm=algo, verbose=False)
+        summary = trainer.train(total_games=3)
+        assert summary["total_games"] == 3
+
+    def test_cross_backend_checkpoint_compatibility(self, tmp_path):
+        """Checkpoint saved by numpy backend can be loaded by torch backend."""
+        self._skip_if_no_torch()
+        numpy_algo = DQNAlgorithmV3(n_pretrain_games=0, seed=0, device="numpy")
+        ckpt = tmp_path / "cross.npz"
+        numpy_algo.save_checkpoint(ckpt)
+        torch_algo = DQNAlgorithmV3(n_pretrain_games=0, seed=99, device="cpu")
+        torch_algo.load_checkpoint(ckpt)
+        board = [[2,4,8,16],[32,64,128,256],[2,4,8,16],[32,64,0,0]]
+        assert numpy_algo.predict(board) == torch_algo.predict(board)
+
+
+# ===========================================================================
+# Parallel training
+# ===========================================================================
+
+class TestParallelTraining:
+    """Tests for n_workers > 1 in RLTrainer."""
+
+    def test_parallel_train_returns_summary(self, tmp_path):
+        algo = DQNAlgorithmV3(n_pretrain_games=0, seed=0, device="numpy")
+        trainer = RLTrainer(algorithm=algo, verbose=False, n_workers=2)
+        summary = trainer.train(total_games=2)
+        assert summary["total_games"] == 2
+        assert "n_workers" in summary
+        assert summary["n_workers"] == 2
+
+    def test_parallel_train_selects_best_worker(self, tmp_path):
+        algo = DQNAlgorithmV3(n_pretrain_games=0, seed=0, device="numpy")
+        trainer = RLTrainer(algorithm=algo, verbose=False, n_workers=2)
+        summary = trainer.train(total_games=2)
+        assert "best_worker" in summary
+        assert summary["best_worker"] in (0, 1)
+
+    def test_parallel_train_saves_checkpoint(self, tmp_path):
+        algo = DQNAlgorithmV3(n_pretrain_games=0, seed=0, device="numpy")
+        trainer = RLTrainer(
+            algorithm=algo, checkpoint_dir=tmp_path, verbose=False, n_workers=2
+        )
+        trainer.train(total_games=2)
+        assert (tmp_path / "checkpoint.npz").exists()
+
+    def test_make_trainer_n_workers_parameter(self):
+        algo = DQNAlgorithmV3(n_pretrain_games=0, seed=0, device="numpy")
+        trainer = make_trainer(algo, verbose=False, n_workers=2)
+        assert trainer._n_workers == 2
+
+    def test_n_workers_one_falls_back_to_sequential(self, tmp_path):
+        """n_workers=1 (default) must use the sequential path."""
+        algo = DQNAlgorithmV3(n_pretrain_games=0, seed=0, device="numpy")
+        trainer = RLTrainer(algorithm=algo, verbose=False, n_workers=1)
+        summary = trainer.train(total_games=2)
+        # Sequential training does NOT include n_workers key.
+        assert "n_workers" not in summary
+
+
+# ===========================================================================
+# Early stopping
+# ===========================================================================
+
+class TestEarlyStoppingCallback:
+    """Tests for EvalCallback early stopping (patience + min_delta)."""
+
+    def _make_algo(self):
+        return DQNAlgorithmV3(n_pretrain_games=0, seed=0, device="numpy")
+
+    def test_patience_zero_disables_early_stopping(self):
+        """patience=0 must never set should_stop."""
+        algo = self._make_algo()
+        eval_env = Game2048Env(seed=1)
+        cb = EvalCallback(
+            algo, eval_env, eval_freq=1, n_eval_games=2, verbose=False, patience=0
+        )
+        for i in range(1, 20):
+            cb(i)
+        assert cb.should_stop is False
+
+    def test_patience_triggers_after_n_non_improving_rounds(self):
+        """should_stop becomes True exactly after patience rounds without improvement."""
+        algo = self._make_algo()
+        eval_env = Game2048Env(seed=42)
+        cb = EvalCallback(
+            algo, eval_env, eval_freq=1, n_eval_games=2, verbose=False,
+            patience=3, min_delta=0.0,
+        )
+        # Force first eval to establish best_mean_score, then pin it to a
+        # very high value so subsequent real evals never beat old_best+min_delta.
+        cb(1)
+        cb._best_mean_score = 1e12   # subsequent evals cannot surpass this
+        assert cb.should_stop is False, "Should not stop after first eval"
+        # After 3 more rounds without improvement patience should be exhausted.
+        cb(2)
+        cb(3)
+        assert cb.should_stop is False, "Should not stop before patience rounds"
+        cb(4)
+        assert cb.should_stop is True, "Should stop after patience rounds"
+
+    def test_patience_resets_on_improvement(self):
+        """When score genuinely improves, the counter should reset."""
+        algo = self._make_algo()
+        eval_env = Game2048Env(seed=7)
+        cb = EvalCallback(
+            algo, eval_env, eval_freq=1, n_eval_games=2, verbose=False,
+            patience=2, min_delta=0.0,  # any improvement resets counter
+        )
+        # Establish best.
+        cb(1)
+        # Non-improving round (pin best to a high value so real evals don't improve).
+        cb._best_mean_score = 1e12
+        cb(2)
+        assert cb.no_improve_count == 1
+        # Simulate improvement by resetting best_mean_score to a low value.
+        cb._best_mean_score = -1.0  # next eval will beat this
+        cb(3)
+        assert cb.no_improve_count == 0, "Counter must reset on improvement"
+        assert cb.should_stop is False
+
+    def test_no_improve_count_property(self):
+        """no_improve_count increments correctly."""
+        algo = self._make_algo()
+        eval_env = Game2048Env(seed=3)
+        cb = EvalCallback(
+            algo, eval_env, eval_freq=1, n_eval_games=2, verbose=False,
+            patience=5, min_delta=0.0,
+        )
+        cb(1)  # sets best
+        cb._best_mean_score = 1e12  # pin so subsequent rounds never improve
+        for i in range(2, 6):
+            cb(i)
+        assert cb.no_improve_count == 4
+
+    def test_trainer_stops_early_when_patience_exhausted(self):
+        """RLTrainer must exit before total_games when should_stop fires."""
+        algo = self._make_algo()
+        eval_env = Game2048Env(seed=0)
+        cb = EvalCallback(
+            algo, eval_env,
+            eval_freq=2,
+            n_eval_games=2,
+            verbose=False,
+            patience=2,
+            min_delta=0.0,
+        )
+        # Pin best_mean_score after first eval by overriding the method;
+        # all subsequent evals won't improve → patience exhausts quickly.
+        original_run_eval = cb._run_eval
+        call_count = [0]
+        def _patched_run_eval(game_num: int) -> dict:
+            result = original_run_eval(game_num)
+            call_count[0] += 1
+            if call_count[0] >= 1:
+                cb._best_mean_score = 1e12  # pin after first eval
+            return result
+        cb._run_eval = _patched_run_eval
+        trainer = RLTrainer(algorithm=algo, eval_callback=cb, verbose=False)
+        summary = trainer.train(total_games=1000)
+        assert summary["stopped_early"] is True
+        assert summary["total_games"] < 1000
+
+    def test_trainer_does_not_stop_early_when_patience_zero(self):
+        """RLTrainer must play all games when patience=0 (default)."""
+        algo = self._make_algo()
+        trainer = RLTrainer(algorithm=algo, verbose=False)
+        summary = trainer.train(total_games=5)
+        assert summary["stopped_early"] is False
+        assert summary["total_games"] == 5
+
+    def test_make_trainer_patience_wired(self):
+        """make_trainer passes patience + min_delta through to EvalCallback."""
+        algo = self._make_algo()
+        trainer = make_trainer(algo, verbose=False, patience=3, min_delta=50.0)
+        assert trainer._eval_cb is not None
+        assert trainer._eval_cb._patience == 3
+        assert trainer._eval_cb._min_delta == 50.0
+
+    def test_summary_stopped_early_key_always_present(self):
+        """Summary dict must always contain 'stopped_early' key."""
+        algo = self._make_algo()
+        trainer = RLTrainer(algorithm=algo, verbose=False)
+        summary = trainer.train(total_games=2)
+        assert "stopped_early" in summary
+
+    def test_early_stop_saves_best_checkpoint(self, tmp_path):
+        """Best checkpoint must be saved even when training stopped early."""
+        algo = self._make_algo()
+        eval_env = Game2048Env(seed=0)
+        best_ckpt = tmp_path / "best.npz"
+        cb = EvalCallback(
+            algo, eval_env,
+            eval_freq=2, n_eval_games=2,
+            best_ckpt_path=best_ckpt,
+            verbose=False,
+            patience=2, min_delta=0.0,
+        )
+        # Pin best after first eval so patience exhausts quickly.
+        original_run_eval = cb._run_eval
+        called = [False]
+        def _pin_after_first(game_num: int) -> dict:
+            result = original_run_eval(game_num)
+            if not called[0]:
+                called[0] = True
+                cb._best_mean_score = 1e12
+            return result
+        cb._run_eval = _pin_after_first
+        trainer = RLTrainer(algorithm=algo, eval_callback=cb, verbose=False)
+        trainer.train(total_games=200)
+        # best_checkpoint.npz should exist (first eval is always a new best).
+        assert best_ckpt.exists()

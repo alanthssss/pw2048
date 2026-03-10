@@ -24,10 +24,15 @@ Full reference for all `python main.py` flags, modes, and output structure.
 | `--gui` | off | Launch the desktop GUI wizard (tkinter) |
 | `--web` | off | Open the web UI launcher in your browser |
 | `--checkpoint-dir DIR` | — | Directory for persisting learning-algorithm model weights. Loaded at startup, saved after every run. DQN / PPO (v3) only. |
-| `--train-games N` | — | Fast in-process training games via the 4-layer Env/Train/Eval/Play pipeline (no browser, 10–50× faster). DQN / PPO only. |
+| `--train-games N` | — | Fast in-process training games via the 4-layer Env/Train/Eval/Play pipeline (no browser, 10–50× faster). DQN / PPO only. Omit when using `--early-stopping-patience` for auto-training. |
 | `--eval-freq N` | `50` | EvalCallback frequency during `--train-games` (every N games) |
 | `--n-eval-games N` | `20` | Number of in-process eval games per EvalCallback round |
 | `--tensorboard-dir DIR` | — | Directory for `training_log.csv` and optional TensorBoard `.tfevents` files |
+| `--train-workers N` | `1` | Parallel independent training workers (N workers each train for `--train-games` games, best one selected) |
+| `--early-stopping-patience N` | `0` | **Auto-stop training** when eval mean score has not improved for N consecutive eval rounds. `0` = disabled. Combine with a large `--train-games` or omit `--train-games` entirely for auto-mode. |
+| `--early-stopping-min-delta D` | `1.0` | Minimum absolute improvement in eval mean score needed to reset the patience counter. |
+| `--inspect-checkpoint PATH` | — | **Print model status** — algorithm, ε, global step, weight norms — from a `.npz` checkpoint file then exit. Example: `--inspect-checkpoint checkpoints/DQN-v3/best_checkpoint.npz` |
+| `--training-status DIR` | — | **Print convergence summary** — best score, trend, sparkline — from `training_log.csv` in DIR then exit. Requires `--tensorboard-dir` was set during training. Example: `--training-status tb_logs/DQN-v3` |
 | `--algo-version TAG` | — | Override the algorithm version tag written to `metrics.json` |
 
 ---

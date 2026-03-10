@@ -3,8 +3,40 @@
 > **Short answer:** the `dqn` and `ppo` algorithms ship with
 > **behavioural-cloning (BC) pre-training** that bootstraps the network to
 > heuristic level before the first game even begins.  Use `--train-games` for
-> fast in-process training, and `--checkpoint-dir` to persist weights across
-> sessions.
+> fast in-process training, `--checkpoint-dir` to persist weights across
+> sessions, and **`--early-stopping-patience`** to stop automatically when
+> your model's performance plateaus.
+>
+> 📘 **New:** see [efficient-training.md](efficient-training.md) for the
+> complete guide on GPU acceleration, parallel workers, early stopping, and
+> model status monitoring.
+
+---
+
+## TL;DR — don't know how many games to train?
+
+Use **auto-training (early stopping)**.  The algorithm trains until its eval
+score stops improving and then stops by itself:
+
+```bash
+# Auto-training: stops when score hasn't improved for 10 eval rounds × 50 games = 500 games.
+python main.py --algorithm dqn \
+               --early-stopping-patience 10 \
+               --eval-freq 50 \
+               --checkpoint-dir checkpoints \
+               --games 0
+
+# Same but with an explicit upper bound (stops at 50 000 games OR plateau, whichever first):
+python main.py --algorithm dqn \
+               --train-games 50000 \
+               --early-stopping-patience 10 \
+               --eval-freq 50 \
+               --checkpoint-dir checkpoints \
+               --games 0
+```
+
+You can also use the **TUI** (`--tui`), **GUI** (`--gui`), or **Web UI**
+(`--web`) wizards — all three have early-stopping controls built in.
 
 ---
 
@@ -114,6 +146,104 @@ Edit `main.py`'s `ALGORITHMS` dict to pass custom values:
 
 ---
 
+## Early stopping — auto-training until stable
+
+> **Use this when you don't know how many games are enough.**
+> It lets the algorithm train as long as it keeps improving, and stops
+> automatically when performance plateaus, saving time and device resources.
+
+### How it works
+
+1. Every `--eval-freq` training games, `EvalCallback` runs `--n-eval-games`
+   greedy episodes and records the mean score.
+2. If the new mean score improves by at least `--early-stopping-min-delta`
+   over the previous best, the patience counter resets to 0.
+3. If not, the counter increments.
+4. When the counter reaches `--early-stopping-patience`, training stops.
+
+```
+Patience window = patience × eval_freq games
+```
+
+Example: `patience=10`, `eval_freq=50` → stop after **500 consecutive games**
+without meaningful improvement.
+
+### CLI
+
+```bash
+# Auto-training: no fixed game count — stops when score plateaus.
+python main.py --algorithm dqn \
+               --early-stopping-patience 10 \
+               --eval-freq 50 \
+               --checkpoint-dir checkpoints \
+               --games 0
+
+# With an explicit upper-bound cap of 50 000 games:
+python main.py --algorithm dqn \
+               --train-games 50000 \
+               --early-stopping-patience 10 \
+               --eval-freq 50 \
+               --checkpoint-dir checkpoints \
+               --games 0
+
+# PPO, stricter: must improve by ≥100 points to keep going.
+python main.py --algorithm ppo \
+               --early-stopping-patience 8 \
+               --early-stopping-min-delta 100 \
+               --eval-freq 100 \
+               --checkpoint-dir checkpoints \
+               --games 0
+```
+
+### Console output
+
+```
+  [eval @  game    50]  mean_score=  1234  max_score=  2048  max_tile= 256 ★ new best
+  [eval @  game   100]  mean_score=  1280  max_score=  3072  max_tile= 256 ★ new best
+  [eval @  game   150]  mean_score=  1260  max_score=  2560  max_tile= 256  [no-improve 1/10, 9 left]
+  ...
+  [eval @  game   600]  mean_score=  1255  max_score=  2680  max_tile= 256  [no-improve 10/10 — stopping now]
+
+  Training complete — early stopped (plateau) in 62.3s  mean_score=1162  max_score=3072
+  Best eval mean_score = 1280
+```
+
+### Python API
+
+```python
+from src.rl_trainer import make_trainer
+from src.algorithms.dqn_algo import DQNAlgorithmV3
+
+algo = DQNAlgorithmV3(n_pretrain_games=50)
+trainer = make_trainer(
+    algo,
+    checkpoint_dir="checkpoints/DQN-v3",
+    eval_freq=50,
+    n_eval_games=20,
+    patience=10,          # stop after 10 bad eval rounds
+    min_delta=1.0,        # any improvement ≥ 1 point counts
+)
+summary = trainer.train(total_games=1_000_000)  # or a smaller explicit cap
+print(f"Stopped early: {summary['stopped_early']}")
+print(f"Games played:  {summary['total_games']}")
+print(f"Best eval:     {summary['best_eval_score']:.0f}")
+```
+
+### Key parameters
+
+| Flag | Default | Effect |
+|---|---|---|
+| `--early-stopping-patience N` | `0` (disabled) | Stop after N consecutive eval rounds without improvement |
+| `--early-stopping-min-delta D` | `1.0` | Minimum score increase to count as improvement |
+| `--eval-freq N` | `50` | Eval runs every N games — controls patience window size |
+| `--n-eval-games N` | `20` | Games per eval round — higher = more reliable signal |
+
+> **Tip:** increase `--n-eval-games` (e.g. to 50 or 100) to reduce noise in
+> the eval signal.  More eval games → fewer false negatives (early stops when
+> the model is still learning).
+
+---
+
 ## Checkpoint contents
 
 The checkpoint is a single `.npz` file (~2 MB for the default 256-unit network).
@@ -206,3 +336,68 @@ Expectimax and Heuristic use hand-crafted heuristics that top out at ~33 000
 avg score.  A trained neural network can discover board patterns those heuristics
 miss.  The current shallow MLP needs many games to get there — use
 `--train-games` + `--checkpoint-dir` to accumulate tens of thousands in-process.
+
+---
+
+## Monitoring model status
+
+Two built-in commands let you inspect your training progress at any time
+**without restarting a training run**.
+
+### Inspect a checkpoint
+
+```bash
+# Show algorithm type, global step, ε, parameter count, and weight norms.
+python main.py --inspect-checkpoint checkpoints/DQN-v3/checkpoint.npz
+python main.py --inspect-checkpoint checkpoints/DQN-v3/best_checkpoint.npz
+```
+
+Sample output:
+
+```
+────────────────────────────────────────────────────────
+  Checkpoint: checkpoints/DQN-v3/best_checkpoint.npz
+────────────────────────────────────────────────────────
+  Algorithm   : DQN-v3
+  File size   : 2078.6 KB
+  Parameters  : 530,448
+  Global step : 24,631
+  ε (epsilon) : 7.12%  [late / converging]
+  Adam steps  : 4,892
+  Weight norms: mean=5.16  min=0.01  max=23.14
+────────────────────────────────────────────────────────
+```
+
+**ε interpretation:** >20% = early training; 5–20% = mid training; <5% = converging.
+
+### Training convergence status
+
+Requires `--tensorboard-dir` to have been set during training.
+
+```bash
+python main.py --training-status tb_logs/DQN-v3
+```
+
+Sample output:
+
+```
+────────────────────────────────────────────────────────
+  Training status: tb_logs/DQN-v3
+────────────────────────────────────────────────────────
+  Train games    : 5,000
+  Eval rounds    : 100
+  Best eval score: 8,432
+  Recent eval mean (10 rounds): 8,109
+  Current ε      : 3.21%
+  Score trend    : +42.3 pts/eval  [↑ improving]
+  Convergence    : 🟡 IMPROVING  (still learning — keep training)
+  Score sparkline: ▄▄▅▅▅▆▆▇▇█
+  Score P25/50/75: 6,124 / 7,432 / 8,109
+────────────────────────────────────────────────────────
+```
+
+**Sparkline** is the last N eval mean scores as a bar chart — flat = plateau.
+**🟢 STABLE** means training has converged; safe to stop.
+**🟡 IMPROVING** means the model is still learning; keep training.
+
+For GPU + parallel training tips see [efficient-training.md](efficient-training.md).
