@@ -1,12 +1,69 @@
 # pw2048 — Play 2048 with Algorithms
 
-Automate the [2048 game](https://play2048.co/) using [Playwright](https://playwright.dev/python/) and collect fancy data visualizations of each algorithm's performance.
+An automation-first **2048 benchmark and experimentation platform** for comparing search and reinforcement learning algorithms with reproducible evaluation, reporting, and developer-friendly workflows.
+
+`pw2048` uses the 2048 game as a compact benchmark environment, but its real value goes beyond “building a game bot”.
+It is designed as a small engineering system for:
+
+- algorithm comparison
+- experiment automation
+- reproducible evaluation
+- report generation
+- training / benchmark workflow design
+- multi-interface developer experience (CLI / TUI / Web)
 
 ## Screenshots
 
 | 2048 Game | Web Launcher |
 |:---------:|:------------:|
 | ![2048 game launch page](https://github.com/user-attachments/assets/971b6d73-36f0-4d47-b9da-0c27a9c3b5f2) | ![pw2048 Web Launcher](https://github.com/user-attachments/assets/bbfba22f-7cdc-44b3-82f5-46dc3f8c983b) |
+
+
+## Why this exists
+
+A lot of AI side projects stop at one of these stages:
+
+- “the algorithm works”
+- “the demo looks cool”
+- “the model trained once”
+
+That is not enough if the goal is to build something reusable, comparable, and explainable.
+
+`pw2048` was created to treat experimentation as an engineering problem:
+
+- How do you benchmark multiple strategies fairly?
+- How do you keep evaluation reproducible?
+- How do you compare search algorithms and RL agents in one workflow?
+- How do you generate outputs that are useful beyond a one-off run?
+
+This makes `pw2048` closer to an **experiment infrastructure / evaluation tooling project** than a simple game automation demo.
+
+---
+
+## What it demonstrates
+
+Although the benchmark environment is 2048, the project demonstrates a broader set of engineering capabilities:
+
+- browser automation with Playwright
+- benchmark workflow design
+- reproducible metric collection
+- RL training / evaluation loop design
+- HTML report generation and visualization
+- experiment ergonomics through CLI / TUI / Web interfaces
+- structured project architecture for iterative algorithm work
+
+A better way to read this repository is:
+
+- **Benchmark Platform**
+- **Experiment Automation Tooling**
+- **Reproducible Evaluation Workflow**
+- **AI-Enhanced Engineering Tooling**
+
+not simply:
+
+- a 2048 bot
+- a hobby RL experiment
+- a game-only side project
 
 ## At a Glance
 
@@ -16,6 +73,58 @@ Automate the [2048 game](https://play2048.co/) using [Playwright](https://playwr
 | **Highest avg score** | ~33 000 (Expectimax, 73% win rate) |
 | **Best learning algorithm** | DQN-v3 / PPO-v3 (behavioural-cloning pre-training) |
 | **Benchmark protocol** | 5 runs × 500 games (auto-parallel) |
+
+--- 
+
+## Current scope
+
+`pw2048` currently supports:
+
+### Search-based strategies
+- Random
+- Greedy
+- Heuristic
+- Expectimax
+- MCTS
+
+### Learning-based strategies
+- DQN (multiple versions)
+- PPO (multiple versions)
+- behavioural-cloning pre-training variants
+
+### Engineering support layers
+- benchmark execution
+- training/evaluation split
+- visualization
+- leaderboard generation
+- CLI/TUI/Web launch paths
+- TensorBoard-compatible logging
+
+---
+
+## Why this matters beyond 2048
+
+The most important part of this repository is not the game itself.
+
+What matters is the structure:
+
+- a controlled environment
+- multiple comparable strategies
+- repeatable evaluation loops
+- automated result reporting
+- an interface layer that makes the system easier to use
+
+That structure is reusable far beyond 2048.
+
+The same engineering pattern can be adapted to:
+
+- agent benchmarking
+- browser-based task evaluation
+- policy comparison experiments
+- lightweight AI test harnesses
+- internal experimentation platforms for model or strategy iteration
+
+---
 
 ## Current Leaderboard
 
@@ -176,6 +285,42 @@ pw2048/
 python -m pytest tests/ -v
 ```
 
+---
+
+## Engineering value of this repository
+
+This repository is useful as a technical project because it shows more than raw algorithm experimentation.
+It also shows:
+
+- how to build an evaluation workflow around algorithms
+- how to separate training, evaluation, and play layers
+- how to automate result collection and reporting
+- how to make an experimentation system easier to operate
+- how to turn a benchmark setup into a reusable engineering asset
+
+That is the main reason `pw2048` belongs in a broader professional narrative around:
+
+- automation
+- tooling
+- experiment infrastructure
+- AI-enhanced engineering systems
+
+---
+
+## Recommended way to present this repo professionally
+
+If you are using this repository in a portfolio, README, or career narrative, the most useful framing is:
+
+> Built an automation-first benchmark platform for comparing search and RL algorithms, with reproducible evaluation, structured reporting, and multiple user interaction layers.
+
+That framing is stronger than:
+
+> I made an AI project that plays 2048.
+
+Because it points attention to the engineering system, not just the toy surface.
+
+---
+
 ## Further reading
 
 | Topic | Doc |
@@ -185,3 +330,11 @@ python -m pytest tests/ -v
 | All CLI flags, parallel mode, result layout | **[docs/cli-reference.md](docs/cli-reference.md)** |
 | TUI / GUI / Web UI wizards | **[docs/ui-wizards.md](docs/ui-wizards.md)** |
 
+---
+
+## Summary
+
+`pw2048` is an experiment platform built around 2048, but its real contribution is in the surrounding engineering system:
+benchmark design, experiment automation, evaluation workflows, and report generation.
+
+That is what makes it more than a game project — and closer to a reusable AI engineering asset.
