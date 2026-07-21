@@ -7,9 +7,10 @@ from typing import List
 
 from playwright.sync_api import Page
 
+from src.constants import DIRECTIONS
+
 
 GAME_URL = pathlib.Path(__file__).parent.parent / "game.html"
-DIRECTIONS = ["up", "down", "left", "right"]
 
 
 class Game2048:

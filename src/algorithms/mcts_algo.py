@@ -8,7 +8,7 @@ from typing import List
 
 from .base import BaseAlgorithm
 from .greedy_algo import simulate_move, _boards_equal
-from src.game import DIRECTIONS
+from src.constants import DIRECTIONS
 
 # Tile-spawn probabilities: 90 % chance of spawning a 2, 10 % chance of a 4.
 _SPAWN_PROBS = ((2, 0.9), (4, 0.1))
@@ -346,4 +346,3 @@ class MCTSAlgorithmV2(BaseAlgorithm):
 # ---------------------------------------------------------------------------
 
 MCTSAlgorithm = MCTSAlgorithmV2
-

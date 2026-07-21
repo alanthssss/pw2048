@@ -18,7 +18,7 @@ from typing import List, Optional, Tuple
 import numpy as np
 
 from src.algorithms.greedy_algo import _boards_equal, simulate_move
-from src.game import DIRECTIONS
+from src.constants import DIRECTIONS
 
 # ---------------------------------------------------------------------------
 # Constants

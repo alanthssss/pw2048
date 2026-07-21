@@ -8,7 +8,7 @@ from typing import List
 from .base import BaseAlgorithm
 from .greedy_algo import simulate_move, _boards_equal
 from .heuristic_algo import _score_board
-from src.game import DIRECTIONS
+from src.constants import DIRECTIONS
 
 # Tile-spawn probabilities used by the 2048 game: 90 % → 2, 10 % → 4.
 _SPAWN_PROBS = ((2, 0.9), (4, 0.1))

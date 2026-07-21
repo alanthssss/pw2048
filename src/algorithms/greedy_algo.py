@@ -6,7 +6,7 @@ import random
 from typing import List, Tuple
 
 from .base import BaseAlgorithm
-from src.game import DIRECTIONS
+from src.constants import DIRECTIONS
 
 
 def _slide_row_left(row: List[int]) -> Tuple[List[int], int]:

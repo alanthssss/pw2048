@@ -1,0 +1,10 @@
+.git
+.github
+checkpoints
+results
+tb_logs
+__pycache__
+*.pyc
+*.npz
+docs
+tests
