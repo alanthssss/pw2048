@@ -1,0 +1,8 @@
+{
+  "algorithm": "dqn-v3",
+  "random_seed": 42,
+  "total_games": 2000,
+  "eval_frequency": 50,
+  "evaluation_games": 500,
+  "early_stopping_patience": 10
+}

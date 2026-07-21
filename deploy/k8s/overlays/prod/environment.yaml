@@ -1,0 +1,29 @@
+apiVersion: v1
+kind: Namespace
+metadata: {name: pw2048}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata: {name: pw2048-stable}
+spec: {rules: [{host: pw2048.example.com, http: {paths: [{path: /, pathType: Prefix, backend: {service: {name: pw2048-stable, port: {number: 80}}}}]}}]}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata: {name: pw2048-canary}
+spec: {rules: [{host: pw2048.example.com, http: {paths: [{path: /, pathType: Prefix, backend: {service: {name: pw2048-canary, port: {number: 80}}}}]}}]}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata: {name: pw2048-stable}
+spec: {minReplicas: 3, maxReplicas: 20}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: {name: pw2048-stable}
+spec: {minAvailable: 2}
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata: {name: pw2048-quota}
+spec:
+  hard: {requests.cpu: "16", requests.memory: 32Gi, limits.cpu: "32", limits.memory: 64Gi, pods: "50"}

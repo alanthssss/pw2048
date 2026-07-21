@@ -1,0 +1,73 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pw2048-stable
+  labels: {app: pw2048, track: stable}
+spec:
+  replicas: 2
+  strategy: {type: RollingUpdate, rollingUpdate: {maxUnavailable: 0, maxSurge: 1}}
+  selector: {matchLabels: {app: pw2048, track: stable}}
+  template:
+    metadata:
+      labels: {app: pw2048, track: stable}
+      annotations: {prometheus.io/scrape: "true", prometheus.io/port: "8080", prometheus.io/path: /metrics}
+    spec:
+      serviceAccountName: pw2048
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 30
+      securityContext: {runAsNonRoot: true, runAsUser: 10001, runAsGroup: 10001, fsGroup: 10001, seccompProfile: {type: RuntimeDefault}}
+      topologySpreadConstraints:
+        - {maxSkew: 1, topologyKey: kubernetes.io/hostname, whenUnsatisfiable: ScheduleAnyway, labelSelector: {matchLabels: {app: pw2048, track: stable}}}
+      containers:
+        - name: api
+          image: ghcr.io/alanthssss/pw2048:stable
+          imagePullPolicy: IfNotPresent
+          env:
+            - {name: RELEASE_TRACK, value: stable}
+            - {name: MODEL_NAME, value: greedy}
+            - {name: MODEL_VERSION, value: v1}
+            - {name: OTEL_EXPORTER_OTLP_ENDPOINT, value: "http://otel-collector.monitoring.svc:4318"}
+          ports: [{name: http, containerPort: 8080}]
+          startupProbe: {httpGet: {path: /healthz, port: http}, failureThreshold: 30, periodSeconds: 2}
+          readinessProbe: {httpGet: {path: /readyz, port: http}, periodSeconds: 5, timeoutSeconds: 2}
+          livenessProbe: {httpGet: {path: /healthz, port: http}, periodSeconds: 10, timeoutSeconds: 2}
+          lifecycle: {preStop: {exec: {command: ["/bin/sh", "-c", "sleep 5"]}}}
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+          resources: {requests: {cpu: 100m, memory: 128Mi}, limits: {cpu: "1", memory: 512Mi}}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pw2048-canary
+  labels: {app: pw2048, track: canary}
+spec:
+  replicas: 1
+  strategy: {type: RollingUpdate, rollingUpdate: {maxUnavailable: 0, maxSurge: 1}}
+  selector: {matchLabels: {app: pw2048, track: canary}}
+  template:
+    metadata:
+      labels: {app: pw2048, track: canary}
+      annotations: {prometheus.io/scrape: "true", prometheus.io/port: "8080", prometheus.io/path: /metrics}
+    spec:
+      serviceAccountName: pw2048
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 30
+      securityContext: {runAsNonRoot: true, runAsUser: 10001, runAsGroup: 10001, fsGroup: 10001, seccompProfile: {type: RuntimeDefault}}
+      topologySpreadConstraints:
+        - {maxSkew: 1, topologyKey: kubernetes.io/hostname, whenUnsatisfiable: ScheduleAnyway, labelSelector: {matchLabels: {app: pw2048, track: canary}}}
+      containers:
+        - name: api
+          image: ghcr.io/alanthssss/pw2048:canary
+          imagePullPolicy: Always
+          env:
+            - {name: RELEASE_TRACK, value: canary}
+            - {name: MODEL_NAME, value: heuristic}
+            - {name: MODEL_VERSION, value: v2}
+            - {name: OTEL_EXPORTER_OTLP_ENDPOINT, value: "http://otel-collector.monitoring.svc:4318"}
+          ports: [{name: http, containerPort: 8080}]
+          startupProbe: {httpGet: {path: /healthz, port: http}, failureThreshold: 30, periodSeconds: 2}
+          readinessProbe: {httpGet: {path: /readyz, port: http}, periodSeconds: 5, timeoutSeconds: 2}
+          livenessProbe: {httpGet: {path: /healthz, port: http}, periodSeconds: 10, timeoutSeconds: 2}
+          lifecycle: {preStop: {exec: {command: ["/bin/sh", "-c", "sleep 5"]}}}
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+          resources: {requests: {cpu: 100m, memory: 128Mi}, limits: {cpu: "1", memory: 512Mi}}

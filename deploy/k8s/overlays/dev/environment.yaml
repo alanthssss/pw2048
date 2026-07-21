@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: Namespace
+metadata: {name: pw2048}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata: {name: pw2048-stable}
+spec: {rules: [{host: dev.pw2048.local, http: {paths: [{path: /, pathType: Prefix, backend: {service: {name: pw2048-stable, port: {number: 80}}}}]}}]}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata: {name: pw2048-canary}
+spec: {rules: [{host: dev.pw2048.local, http: {paths: [{path: /, pathType: Prefix, backend: {service: {name: pw2048-canary, port: {number: 80}}}}]}}]}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata: {name: pw2048-stable}
+spec: {minReplicas: 1, maxReplicas: 2}

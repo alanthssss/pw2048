@@ -208,3 +208,8 @@ __marimo__/
 
 # pw2048 generated results
 results/
+model-registry/
+artifacts/
+capacity-plan.json
+capacity-plan.md
+loadtest-summary.json

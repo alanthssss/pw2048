@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: pw2048-stable
+  labels: {app: pw2048, track: stable}
+spec:
+  selector: {app: pw2048, track: stable}
+  ports: [{name: http, port: 80, targetPort: http}]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pw2048-canary
+  labels: {app: pw2048, track: canary}
+spec:
+  selector: {app: pw2048, track: canary}
+  ports: [{name: http, port: 80, targetPort: http}]
