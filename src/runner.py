@@ -81,7 +81,7 @@ def _run_batch(
 
             while not game.is_game_over():
                 board = game.get_board()
-                direction = algorithm.choose_move(board)
+                direction = algorithm.predict(board)
                 game.make_move(direction)
                 if move_delay_ms:
                     page.wait_for_timeout(move_delay_ms)
@@ -153,6 +153,13 @@ def run_games(
         One row per game with columns: run_id, game_index, algorithm, score,
         best_tile, moves, duration, won, timestamp.
     """
+    if n_workers > 1 and getattr(algorithm, "supports_checkpoint", False):
+        print(
+            "  [benchmark] learning models run sequentially so the loaded "
+            "checkpoint is preserved in every game."
+        )
+        n_workers = 1
+
     if n_workers <= 1:
         # ----------------------------------------------------------------
         # Sequential path (original behaviour, single browser)
@@ -171,7 +178,7 @@ def run_games(
 
                 while not game.is_game_over():
                     board = game.get_board()
-                    direction = algorithm.choose_move(board)
+                    direction = algorithm.predict(board)
                     game.make_move(direction)
                     if move_delay_ms:
                         page.wait_for_timeout(move_delay_ms)

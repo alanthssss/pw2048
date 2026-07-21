@@ -1,8 +1,9 @@
 # RL Training Guide — Getting High Scores with Learning Algorithms
 
 > **Short answer:** the `dqn` and `ppo` algorithms ship with
-> **behavioural-cloning (BC) pre-training** that bootstraps the network to
-> heuristic level before the first game even begins.  Use `--train-games` for
+> **behavioural-cloning (BC) pre-training** that gives the network a useful
+> heuristic warm start. It does not guarantee teacher-level performance or
+> improvement beyond the teacher. Use `--train-games` for
 > fast in-process training, `--checkpoint-dir` to persist weights across
 > sessions, and **`--early-stopping-patience`** to stop automatically when
 > your model's performance plateaus.
@@ -40,9 +41,11 @@ You can also use the **TUI** (`--tui`), **GUI** (`--gui`), or **Web UI**
 
 ---
 
-## Why learning algorithms score below heuristics on first run
+## Why learning algorithms can score below heuristics
 
-Deep reinforcement learning needs **millions** of training steps to converge.
+Deep reinforcement learning often needs **millions** of training steps and a
+correct objective to converge. More training alone is not a guarantee: reward,
+terminal handling and evaluation must also be sound.
 A short run (e.g. `--mode dev`, 100 games × ~200 moves ≈ 20 000 steps) is not
 enough for a pure-numpy MLP starting from random weights.  All past DQN/PPO
 versions (v1, v2) also used an inverted reward — merging two 64-tiles produced
@@ -52,11 +55,15 @@ reward `−5`, actively teaching the agent to *avoid* merging.
 
 | Problem | Old behaviour | v3 fix |
 |---|---|---|
-| Inverted reward | `Δ(Σ log₂ tiles)` penalises good merges | `log₂(merge_score+1) + 0.1·empty` — always ≥ 0 |
-| Cold-start | Random weights → random play for whole run | **BC pre-training**: network imitates Heuristic on 50 games before RL begins |
+| Inverted reward | `Δ(Σ log₂ tiles)` penalises good merges | merge-score reward + change in empty cells + terminal penalty |
+| Cold-start | Random weights → random play for whole run | **BC pre-training**: network starts by approximating Heuristic decisions |
 | Slow optimiser | Vanilla SGD | Adam (faster, more stable on noisy RL loss) |
 | Weak encoding | 16-dim log₂ vector | 256-dim one-hot (16 cells × 16 tile levels) |
 | Cross-game corruption | `_prev_board` bleeds across games | `on_game_start()` hook flushes state before each new game |
+| Evaluation contamination | Benchmark explored and trained | benchmark calls deterministic `predict()` and freezes model state |
+| Missing terminal sample | Last action was never observed | trainer passes every transition explicitly, including `done=True` |
+| PPO rollout loss | Short episode tails were cleared | terminal rollouts flush with zero bootstrap value |
+| Parallel checkpoint loss | Workers constructed fresh models | learned checkpoints are evaluated sequentially |
 
 ---
 
@@ -69,8 +76,9 @@ reward `−5`, actively teaching the agent to *avoid* merging.
 python main.py --algorithm dqn --mode dev --report
 ```
 
-Expected: DQN-v3 should score noticeably above Random (~1 100) from game 1
-because the network already knows the Heuristic's strategy.
+Expected: BC should outperform an uninitialised network and may beat Random,
+but the result must be measured. BC is a lossy approximation of its teacher,
+not a promise of Heuristic-level performance.
 
 ### Step 2 — Fast in-process training (⚡ recommended)
 
@@ -99,23 +107,27 @@ python main.py --algorithm dqn --train-games 10000 \
 > every `python main.py` invocation starts from scratch (only BC pre-training).
 
 ```bash
-# Session 1 — 500 browser games.  Weights saved after the run.
-python main.py --algorithm dqn --games 500 --checkpoint-dir checkpoints
+# Session 1 — train without the browser, then save the checkpoint.
+python main.py --algorithm dqn --train-games 500 --games 0 \
+               --checkpoint-dir checkpoints
 
-# Session 2 — loads from checkpoints/DQN-v3/checkpoint.npz, continues RL.
-python main.py --algorithm dqn --games 500 --checkpoint-dir checkpoints
+# Session 2 — load the checkpoint and continue training.
+python main.py --algorithm dqn --train-games 500 --games 0 \
+               --checkpoint-dir checkpoints
 
 # Combine with --mode benchmark:
 python main.py --algorithm dqn --mode benchmark --checkpoint-dir checkpoints --report
 python main.py --algorithm ppo --mode benchmark --checkpoint-dir checkpoints --report
 ```
 
-### Step 4 — Full benchmark (~20 min with parallelism)
+### Step 4 — Full frozen-policy benchmark
 
 ```bash
-# 500 games × 5 runs, all CPU cores, HTML leaderboard
-python main.py --algorithm dqn --mode benchmark --parallel $(nproc) --report
-python main.py --algorithm ppo --mode benchmark --parallel $(nproc) --report
+# 500 games × 5 runs, loaded checkpoint, deterministic policy.
+# Learning models intentionally run sequentially so worker construction cannot
+# replace the checkpoint with fresh weights.
+python main.py --algorithm dqn --mode benchmark --checkpoint-dir checkpoints --report
+python main.py --algorithm ppo --mode benchmark --checkpoint-dir checkpoints --report
 ```
 
 ### Step 5 — Compare against baselines
@@ -264,9 +276,11 @@ It is overwritten after every run, so only the latest weights are kept.
 | 500 | ~1 500 – 3 000 |
 | 2 000 | ~3 000 – 6 000 |
 | 10 000 | ~6 000 – 12 000 |
-| 50,000+ | Approaching Heuristic level (~16,000) |
+| 50,000+ | Experiment-dependent; compare on held-out seeds against baselines |
 
-Scores improve unevenly — RL often plateaus then jumps.  Patience is the main ingredient.
+Scores improve unevenly and can regress. A plateau may mean convergence, but it
+can also expose a weak reward or architecture. Trust held-out raw game score,
+not training reward alone.
 
 ---
 
@@ -279,14 +293,14 @@ Scores improve unevenly — RL often plateaus then jumps.  Patience is the main 
 │  No Playwright.  10–50× faster than browser.                        │
 ├─────────────────────────────────────────────────────────────────────┤
 │  Train src/rl_trainer.py → RLTrainer                                │
-│  Drives episodes via Env. Calls algo.choose_move() so DQN/PPO       │
-│  handle their own experience collection + gradient updates.         │
+│  Drives act → env.step → observe_transition explicitly, including   │
+│  the terminal transition and the environment's exact reward.        │
 ├─────────────────────────────────────────────────────────────────────┤
 │  Eval  src/rl_trainer.py → EvalCallback                             │
 │  Greedy eval every N games (uses predict()). Saves best_checkpoint. │
 ├─────────────────────────────────────────────────────────────────────┤
-│  Play  src/runner.py (unchanged)                                    │
-│  Browser benchmark/demo. Loads trained weights via --checkpoint-dir.│
+│  Play  src/runner.py                                                │
+│  Frozen predict() benchmark. Loads weights via --checkpoint-dir.     │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -330,12 +344,22 @@ summary = trainer.train(total_games=5000)
 print(f"Best eval score: {summary['best_eval_score']:.0f}")
 ```
 
-### Why learning *can* beat Expectimax
+### Why learning does not automatically beat Expectimax
 
-Expectimax and Heuristic use hand-crafted heuristics that top out at ~33 000
-avg score.  A trained neural network can discover board patterns those heuristics
-miss.  The current shallow MLP needs many games to get there — use
-`--train-games` + `--checkpoint-dir` to accumulate tens of thousands in-process.
+Expectimax uses hand-crafted structure and the known game dynamics to search
+future states. A small neural policy has no automatic advantage. It may discover
+patterns the heuristic misses, but that is a hypothesis to test, not a property
+to assume.
+
+The current reward follows merge score, adds only the *change* in empty-cell
+count, and applies a terminal penalty. Earlier code paid for every empty cell on
+every step, allowing survival reward to dominate the benchmark objective. Model
+selection continues to use raw game score on held-out evaluation episodes.
+
+If pure DQN/PPO stabilises below Heuristic, the recommended next experiment is a
+learned policy/value network combined with Expectimax. That preserves the known
+transition model while testing whether learning improves leaf evaluation or
+move ordering.
 
 ---
 

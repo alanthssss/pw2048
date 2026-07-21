@@ -889,12 +889,11 @@ class PPOAlgorithmV3(BaseAlgorithm):
     This version fixes all major shortcomings of V1/V2:
 
     * **One-hot state encoding** (256-dim) instead of 16-dim normalized log₂.
-    * **Score-based reward**: ``log₂(merge_score+1) + 0.1·empty_tiles``
-      instead of the V1/V2 heuristic-delta which *penalised* high-value
-      merges and caused the agent to score below Random.
+    * **Environment-owned reward**: merge score, change in empty-cell count,
+      and terminal penalty are passed through an explicit transition.
     * **Adam optimizer**: replaces vanilla SGD.
-    * **Fixed ``done`` flag**: computed before the invalid-move fallback so
-      terminal states are correctly signalled.
+    * **Explicit terminal transition**: the trainer reports ``done`` after
+      ``env.step`` and short episode rollouts are flushed before reset.
     * **Game-boundary reset** via :meth:`on_game_start`: prevents corrupt
       cross-game transitions from polluting the rollout buffer.
     * **Behavioural-cloning pre-training**: before any RL experience the
@@ -1021,13 +1020,7 @@ class PPOAlgorithmV3(BaseAlgorithm):
     # ------------------------------------------------------------------
 
     def on_game_start(self) -> None:
-        """Flush the rollout buffer and reset per-game transition state."""
-        self._buf_states.clear()
-        self._buf_actions.clear()
-        self._buf_log_probs.clear()
-        self._buf_rewards.clear()
-        self._buf_values.clear()
-        self._buf_dones.clear()
+        """Reset pending action state; completed rollouts flush on ``done``."""
         self._prev_state = None
         self._prev_action = None
         self._prev_log_prob = None
@@ -1041,33 +1034,8 @@ class PPOAlgorithmV3(BaseAlgorithm):
             d for d in DIRECTIONS
             if not _boards_equal(board, simulate_move(board, d)[0])
         ]
-        # Compute done flag *before* the fallback override.
-        is_terminal = len(valid_dirs) == 0
         if not valid_dirs:
             valid_dirs = list(DIRECTIONS)
-
-        # ----------------------------------------------------------------
-        # Store transition and trigger PPO update when buffer is full
-        # ----------------------------------------------------------------
-        if self._prev_state is not None:
-            reward = _score_reward(self._prev_board, self._prev_action, board)  # type: ignore[arg-type]
-            done = float(is_terminal)
-            self._buf_states.append(self._prev_state)
-            self._buf_actions.append(self._prev_action)          # type: ignore[arg-type]
-            self._buf_log_probs.append(self._prev_log_prob)      # type: ignore[arg-type]
-            self._buf_rewards.append(float(reward))
-            self._buf_values.append(self._prev_value)            # type: ignore[arg-type]
-            self._buf_dones.append(done)
-
-            if len(self._buf_states) >= self._update_freq:
-                next_val = self._forward_value(state)
-                self._ppo_update(next_val)
-                self._buf_states.clear()
-                self._buf_actions.clear()
-                self._buf_log_probs.clear()
-                self._buf_rewards.clear()
-                self._buf_values.clear()
-                self._buf_dones.clear()
 
         # ----------------------------------------------------------------
         # Policy forward pass — mask invalid actions
@@ -1088,6 +1056,36 @@ class PPOAlgorithmV3(BaseAlgorithm):
         self._prev_board = [row[:] for row in board]
 
         return DIRECTIONS[action]
+
+    def observe_transition(
+        self,
+        board: List[List[int]],
+        action: str,
+        reward: float,
+        next_board: List[List[int]],
+        done: bool,
+    ) -> None:
+        """Record a transition and train on every episode tail."""
+        if self._prev_state is None:
+            return
+        self._buf_states.append(self._prev_state)
+        self._buf_actions.append(self._prev_action)          # type: ignore[arg-type]
+        self._buf_log_probs.append(self._prev_log_prob)      # type: ignore[arg-type]
+        self._buf_rewards.append(float(reward))
+        self._buf_values.append(self._prev_value)            # type: ignore[arg-type]
+        self._buf_dones.append(float(done))
+
+        if done or len(self._buf_states) >= self._update_freq:
+            next_value = 0.0 if done else self._forward_value(
+                _encode_board_onehot(next_board)
+            )
+            self._ppo_update(next_value)
+            self._buf_states.clear()
+            self._buf_actions.clear()
+            self._buf_log_probs.clear()
+            self._buf_rewards.clear()
+            self._buf_values.clear()
+            self._buf_dones.clear()
 
     def predict(self, board: List[List[int]]) -> str:
         """Return the greedy (argmax) action without any buffer update.

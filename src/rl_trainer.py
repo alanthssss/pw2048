@@ -710,7 +710,14 @@ class RLTrainer:
             board = self._env.board
             direction = self._algo.choose_move(board)
             action = DIRECTIONS.index(direction)
-            self._env.step(action)
+            _, reward, terminated, truncated, _ = self._env.step(action)
+            self._algo.observe_transition(
+                board,
+                direction,
+                reward,
+                self._env.board,
+                terminated or truncated,
+            )
 
         return {
             "score":    self._env.score,

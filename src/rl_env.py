@@ -109,7 +109,7 @@ class Game2048Env:
 
     Reward shaping
     --------------
-    ``log₂(merge_score + 1) + 0.1 × empty_cells``
+    ``log₂(merge_score + 1) + 0.1 × Δempty_cells − terminal_penalty``
 
     An *invalid* move (one that does not change the board) gives a small
     ``−0.1`` penalty without advancing the episode.
@@ -204,15 +204,22 @@ class Game2048Env:
             )
 
         # Valid move: spawn a new tile and update state.
+        empty_before = sum(
+            1 for r in range(4) for c in range(4) if self._board[r][c] == 0
+        )
         self._board = _spawn_tile(new_board, self._rng)
         self._score += merge_score
         self._n_steps += 1
 
-        reward = math.log2(merge_score + 1) + 0.1 * sum(
+        terminated = len(self.valid_actions()) == 0
+        empty_after = sum(
             1 for r in range(4) for c in range(4) if self._board[r][c] == 0
         )
-
-        terminated = len(self.valid_actions()) == 0
+        reward = (
+            math.log2(merge_score + 1)
+            + 0.1 * (empty_after - empty_before)
+            - (5.0 if terminated else 0.0)
+        )
         self._done = terminated
         return (
             _encode_onehot(self._board),
