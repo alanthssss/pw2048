@@ -69,10 +69,10 @@ not simply:
 
 | Field | Value |
 |---|---|
-| **Current best algorithm** | Expectimax |
-| **Highest avg score** | ~33 000 (Expectimax, 73% win rate) |
-| **Best learning algorithm** | DQN-v3 / PPO-v3 (behavioural-cloning pre-training) |
-| **Benchmark protocol** | 5 runs × 500 games (auto-parallel) |
+| **Current best measured algorithm** | Expectimax |
+| **Highest historical avg score** | ~33 000 (Expectimax, 73% win rate) |
+| **Learning algorithms** | DQN-v3 / PPO-v3; currently below the strongest search baseline |
+| **Recommended benchmark protocol** | frozen policy, fixed seeds, 5 runs × 500 games |
 
 --- 
 
@@ -142,6 +142,26 @@ The same engineering pattern can be adapted to:
 
 \* DQN-v3 / PPO-v3 include behavioural-cloning pre-training.
 See **[RL Training Guide →](docs/rl-training.md)** to push their scores higher.
+
+### How to interpret the leaderboard
+
+The project does **not** assume that a neural policy must beat a non-learning
+algorithm. 2048 has a compact, known transition model, so Expectimax can search
+future moves directly and is a strong baseline. A small DQN or PPO policy must
+learn comparable structure from data and may remain worse under a limited
+training budget.
+
+The current RL implementation should therefore be read as an honest experiment,
+not as evidence that adding a model automatically improves the score. Its value
+is that the same environment, metrics, checkpoints and reports can expose when
+learning helps, when it does not, and why.
+
+Benchmark runs are inference-only: DQN uses greedy Q-values and PPO uses the
+highest-logit valid action. Exploration, replay-buffer writes and weight updates
+are disabled. Learning checkpoints are evaluated sequentially because creating
+fresh parallel workers would silently discard their loaded weights. Historical
+numbers above predate this stricter protocol and should be treated as
+illustrative until regenerated with frozen policies and matched seed sets.
 
 ## Quick start
 

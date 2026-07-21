@@ -28,6 +28,20 @@ class BaseAlgorithm(ABC):
         mixed with the start of the next game.
         """
 
+    def predict(self, board: List[List[int]]) -> str:
+        """Choose an evaluation action without learning when supported."""
+        return self.choose_move(board)
+
+    def observe_transition(
+        self,
+        board: List[List[int]],
+        action: str,
+        reward: float,
+        next_board: List[List[int]],
+        done: bool,
+    ) -> None:
+        """Consume a training transition; stateless algorithms ignore it."""
+
     @abstractmethod
     def choose_move(self, board: List[List[int]]) -> str:
         """

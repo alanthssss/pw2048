@@ -300,6 +300,53 @@ class TestPPOPredict:
         assert algo._prev_state is None, "predict() must not set _prev_state"
 
 
+class TestExplicitTransitions:
+    """Training consumes exact environment transitions, including game over."""
+
+    board = [
+        [2, 4, 8, 16],
+        [32, 64, 128, 256],
+        [2, 4, 8, 16],
+        [32, 64, 0, 0],
+    ]
+
+    def test_dqn_records_terminal_transition(self):
+        algo = DQNAlgorithmV3(
+            n_pretrain_games=0, batch_size=64, seed=0, device="numpy"
+        )
+        action = algo.choose_move(self.board)
+        algo.observe_transition(self.board, action, -5.0, self.board, True)
+
+        assert len(algo._buffer) == 1
+        assert algo._buffer[-1][4] == pytest.approx(1.0)
+        assert algo._buffer[-1][2] == pytest.approx(-5.0)
+
+    def test_ppo_flushes_short_rollout_at_game_end(self, monkeypatch):
+        algo = PPOAlgorithmV3(
+            n_pretrain_games=0, update_freq=1024, n_epochs=1,
+            seed=0, device="numpy"
+        )
+        calls = []
+        monkeypatch.setattr(algo, "_ppo_update", lambda next_value: calls.append(next_value))
+
+        action = algo.choose_move(self.board)
+        algo.observe_transition(self.board, action, -5.0, self.board, True)
+
+        assert calls == [0.0]
+        assert algo._buf_states == []
+        assert algo._buf_dones == []
+
+    def test_trainer_passes_one_transition_per_environment_step(self):
+        algo = DQNAlgorithmV3(
+            n_pretrain_games=0, batch_size=10_000, seed=0, device="numpy"
+        )
+        trainer = RLTrainer(algorithm=algo, verbose=False)
+        result = trainer._run_episode()
+
+        assert len(algo._buffer) == result["n_steps"]
+        assert algo._buffer[-1][4] == pytest.approx(1.0)
+
+
 # ===========================================================================
 # TrainingLogger
 # ===========================================================================

@@ -767,9 +767,9 @@ class DQNAlgorithmV3(BaseAlgorithm):
     * **One-hot state encoding** (256-dim): each of the 16 cells is encoded
       as a 16-level one-hot vector so the network can learn independent
       weights for every ``(cell-position, tile-value)`` pair.
-    * **Score-based reward**: ``log₂(merge_score+1) + 0.1·empty_tiles``
-      instead of the V1/V2 heuristic-delta which *penalised* high-value
-      merges and caused the agent to score below Random.
+    * **Environment-owned reward**: merge score, change in empty-cell count,
+      and terminal penalty are passed through an explicit transition instead
+      of being reconstructed on the next action.
     * **Adam optimizer**: replaces vanilla SGD for faster, more stable
       convergence on the noisy RL loss landscape.
     * **Train every 4 steps**: reduces update correlation and computational
@@ -779,9 +779,7 @@ class DQNAlgorithmV3(BaseAlgorithm):
     * **Behavioural-cloning pre-training**: before any RL experience the
       Q-network is warmed up by imitating the Heuristic algorithm on
       ``n_pretrain_games`` simulated games (browser-free, in-process).
-      After pre-training the agent already plays at heuristic level, so RL
-      fine-tuning can improve further rather than spending most of a run
-      re-discovering basic strategy.
+      This is a warm start, not a guarantee of teacher-level performance.
     * Larger replay buffer (50 000) and mini-batch (128).
     * Slower ε-decay (0.9998) for adequate exploration.
     * **Optional GPU acceleration**: when PyTorch is installed the network runs
@@ -924,28 +922,8 @@ class DQNAlgorithmV3(BaseAlgorithm):
             d for d in DIRECTIONS
             if not _boards_equal(board, simulate_move(board, d)[0])
         ]
-        is_terminal = len(valid_dirs) == 0
         if not valid_dirs:
             valid_dirs = list(DIRECTIONS)
-
-        # ----------------------------------------------------------------
-        # Store transition and (optionally) train
-        # ----------------------------------------------------------------
-        if self._prev_state is not None:
-            reward = _score_reward(self._prev_board, self._prev_action, board)  # type: ignore[arg-type]
-            done = float(is_terminal)
-            self._buffer.append((
-                self._prev_state,
-                self._prev_action,
-                reward,
-                state.copy(),
-                done,
-            ))
-            if (
-                len(self._buffer) >= self._batch_size
-                and self._step % self._train_freq == 0
-            ):
-                self._train_step()
 
         # ----------------------------------------------------------------
         # ε-greedy action selection (restricted to valid moves)
@@ -962,6 +940,8 @@ class DQNAlgorithmV3(BaseAlgorithm):
         # Housekeeping
         # ----------------------------------------------------------------
         self._epsilon = max(self._epsilon_end, self._epsilon * self._epsilon_decay)
+        # Retained for checkpoint/debug compatibility; transitions are now
+        # learned exclusively through observe_transition().
         self._prev_state = state
         self._prev_action = _DIR_INDEX[chosen_dir]
         self._prev_board = [row[:] for row in board]
@@ -971,6 +951,28 @@ class DQNAlgorithmV3(BaseAlgorithm):
             self._target_net.copy_weights(self._q_net)
 
         return chosen_dir
+
+    def observe_transition(
+        self,
+        board: List[List[int]],
+        action: str,
+        reward: float,
+        next_board: List[List[int]],
+        done: bool,
+    ) -> None:
+        """Store the exact environment transition, including terminal steps."""
+        self._buffer.append((
+            _encode_board_onehot(board),
+            _DIR_INDEX[action],
+            float(reward),
+            _encode_board_onehot(next_board),
+            float(done),
+        ))
+        if (
+            len(self._buffer) >= self._batch_size
+            and self._step % self._train_freq == 0
+        ):
+            self._train_step()
 
     def predict(self, board: List[List[int]]) -> str:
         """Return the greedy action without any exploration or buffer update.
