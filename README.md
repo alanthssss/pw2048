@@ -198,6 +198,26 @@ automatic metric gates, promotion, and rollback.
 
 See **[Canary Deployment Guide](docs/canary-deployment.md)**.
 
+### AI engineering lifecycle
+
+The production example covers the full path from reproducible training
+metadata to controlled operation:
+
+1. immutable model manifests and a pluggable registry;
+2. stable/candidate offline quality gates;
+3. GitLab CI test, scan, deploy, load-test, canary and approval stages;
+4. Prometheus metrics, Grafana dashboard, alerts, SLOs and OpenTelemetry spans;
+5. k6 load tests and an automated N+1 capacity plan;
+6. Kustomize-separated Dev/Test/Demo/Prod environments and production policy;
+7. model pre-warm, rate/concurrency limits, backpressure and deadlines;
+8. fault injection, rollback verification and an incident runbook.
+
+Start with the [Model Lifecycle](docs/model-lifecycle.md),
+[Capacity Planning](docs/capacity-planning.md),
+[Production Kubernetes](docs/kubernetes-production.md),
+[Observability](docs/observability.md), and
+[Incident Runbook](docs/incident-runbook.md) guides.
+
 ## 4-layer RL Training Pipeline
 
 The system exposes a structured Env / Train / Eval / Play stack for sustained

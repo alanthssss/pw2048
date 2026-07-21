@@ -1,0 +1,26 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata: {name: pw2048-stable}
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: pw2048.local
+      http:
+        paths:
+          - {path: /, pathType: Prefix, backend: {service: {name: pw2048-stable, port: {number: 80}}}}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: pw2048-canary
+  annotations:
+    nginx.ingress.kubernetes.io/canary: "true"
+    nginx.ingress.kubernetes.io/canary-weight: "0"
+    nginx.ingress.kubernetes.io/canary-by-cookie: pw2048_canary
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: pw2048.local
+      http:
+        paths:
+          - {path: /, pathType: Prefix, backend: {service: {name: pw2048-canary, port: {number: 80}}}}

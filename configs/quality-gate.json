@@ -1,0 +1,9 @@
+{
+  "minimum_evaluation_games": 500,
+  "metrics": {
+    "mean_score": {"direction": "maximize", "max_regression_percent": 3},
+    "p90_score": {"direction": "maximize", "max_regression_percent": 5},
+    "win_rate": {"direction": "maximize", "max_regression_absolute": 0.01},
+    "invalid_action_rate": {"direction": "minimize", "max_regression_absolute": 0}
+  }
+}

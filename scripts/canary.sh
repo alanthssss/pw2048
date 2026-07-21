@@ -4,6 +4,8 @@ set -euo pipefail
 NAMESPACE=${NAMESPACE:-pw2048}
 INGRESS=${INGRESS:-pw2048-canary}
 DEPLOYMENT=${DEPLOYMENT:-pw2048-canary}
+STABLE_DEPLOYMENT=${STABLE_DEPLOYMENT:-pw2048-stable}
+CANARY_SERVICE=${CANARY_SERVICE:-pw2048-canary}
 OBSERVE_SECONDS=${OBSERVE_SECONDS:-60}
 MAX_ERROR_RATE=${MAX_ERROR_RATE:-0.01}
 MAX_AVG_LATENCY=${MAX_AVG_LATENCY:-0.25}
@@ -22,7 +24,7 @@ weight() {
 metrics() {
   kubectl -n "$NAMESPACE" run "metrics-$RANDOM" --rm -i --restart=Never \
     --image=curlimages/curl:8.10.1 --command -- \
-    curl -fsS http://pw2048-canary/metrics 2>/dev/null
+    curl -fsS "http://$CANARY_SERVICE/metrics" 2>/dev/null
 }
 
 gate() {
@@ -54,8 +56,8 @@ case "${1:-}" in
     [[ $# -ge 2 ]] || { usage; exit 2; }
     kubectl apply -f deploy/k8s/all.yaml
     weight 0
-    kubectl -n "$NAMESPACE" set image deployment/pw2048-stable api="$2"
-    kubectl -n "$NAMESPACE" set env deployment/pw2048-stable \
+    kubectl -n "$NAMESPACE" set image deployment/$STABLE_DEPLOYMENT api="$2"
+    kubectl -n "$NAMESPACE" set env deployment/$STABLE_DEPLOYMENT \
       MODEL_NAME="${3:-greedy}" MODEL_VERSION="${4:-v1}" RELEASE_TRACK=stable
     kubectl -n "$NAMESPACE" rollout status deployment/pw2048-stable --timeout=180s
     kubectl -n "$NAMESPACE" scale deployment "$DEPLOYMENT" --replicas=0 >/dev/null
@@ -63,7 +65,7 @@ case "${1:-}" in
     ;;
   deploy)
     [[ $# -ge 2 ]] || { usage; exit 2; }
-    if ! kubectl -n "$NAMESPACE" get deployment pw2048-stable >/dev/null 2>&1; then
+    if ! kubectl -n "$NAMESPACE" get deployment "$STABLE_DEPLOYMENT" >/dev/null 2>&1; then
       echo "stable baseline missing; run '$0 bootstrap STABLE_IMAGE' first" >&2
       exit 1
     fi
@@ -84,9 +86,9 @@ case "${1:-}" in
     image=$(kubectl -n "$NAMESPACE" get deployment "$DEPLOYMENT" -o jsonpath='{.spec.template.spec.containers[0].image}')
     model=$(kubectl -n "$NAMESPACE" get deployment "$DEPLOYMENT" -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="MODEL_NAME")].value}')
     version=$(kubectl -n "$NAMESPACE" get deployment "$DEPLOYMENT" -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="MODEL_VERSION")].value}')
-    kubectl -n "$NAMESPACE" set image deployment/pw2048-stable api="$image"
-    kubectl -n "$NAMESPACE" set env deployment/pw2048-stable MODEL_NAME="$model" MODEL_VERSION="$version" RELEASE_TRACK=stable
-    kubectl -n "$NAMESPACE" rollout status deployment/pw2048-stable --timeout=180s
+    kubectl -n "$NAMESPACE" set image deployment/$STABLE_DEPLOYMENT api="$image"
+    kubectl -n "$NAMESPACE" set env deployment/$STABLE_DEPLOYMENT MODEL_NAME="$model" MODEL_VERSION="$version" RELEASE_TRACK=stable
+    kubectl -n "$NAMESPACE" rollout status deployment/$STABLE_DEPLOYMENT --timeout=180s
     weight 0
     kubectl -n "$NAMESPACE" scale deployment "$DEPLOYMENT" --replicas=0
     echo "promotion complete: $image ($model:$version) is stable"

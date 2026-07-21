@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pw2048-grafana-dashboard
+  namespace: monitoring
+  labels: {grafana_dashboard: "1"}
+data:
+  pw2048.json: |-
+    {
+      "annotations":{"list":[]},"editable":true,"graphTooltip":1,"id":null,
+      "links":[],"refresh":"30s","schemaVersion":39,"style":"dark",
+      "tags":["pw2048","slo","canary"],"templating":{"list":[
+        {"name":"namespace","type":"query","datasource":{"type":"prometheus","uid":"prometheus"},"query":"label_values(pw2048_build_info, namespace)","current":{}},
+        {"name":"track","type":"query","datasource":{"type":"prometheus","uid":"prometheus"},"query":"label_values(pw2048_build_info{namespace=\"$namespace\"}, release)","includeAll":true,"current":{}}
+      ]},"time":{"from":"now-6h","to":"now"},"title":"pw2048 Service & Canary SLO","uid":"pw2048-slo","version":1,
+      "panels":[
+        {"id":1,"type":"timeseries","title":"Request rate","datasource":{"type":"prometheus","uid":"prometheus"},"targets":[{"expr":"sum by (release) (rate(pw2048_inference_requests_total{namespace=\"$namespace\",release=~\"$track\"}[5m]))","legendFormat":"{{release}}"}],"gridPos":{"h":8,"w":12,"x":0,"y":0}},
+        {"id":2,"type":"timeseries","title":"Error ratio","datasource":{"type":"prometheus","uid":"prometheus"},"targets":[{"expr":"sum by (release) (rate(pw2048_inference_errors_total{namespace=\"$namespace\",release=~\"$track\"}[5m])) / clamp_min(sum by (release) (rate(pw2048_inference_requests_total{namespace=\"$namespace\",release=~\"$track\"}[5m])),0.001)","legendFormat":"{{release}}"}],"fieldConfig":{"defaults":{"unit":"percentunit"}},"gridPos":{"h":8,"w":12,"x":12,"y":0}},
+        {"id":3,"type":"timeseries","title":"Inference latency P50/P95/P99","datasource":{"type":"prometheus","uid":"prometheus"},"targets":[{"expr":"histogram_quantile(0.50,sum by (release,le)(rate(pw2048_inference_duration_seconds_bucket{namespace=\"$namespace\",release=~\"$track\"}[5m])))","legendFormat":"p50 {{release}}"},{"expr":"histogram_quantile(0.95,sum by (release,le)(rate(pw2048_inference_duration_seconds_bucket{namespace=\"$namespace\",release=~\"$track\"}[5m])))","legendFormat":"p95 {{release}}"},{"expr":"histogram_quantile(0.99,sum by (release,le)(rate(pw2048_inference_duration_seconds_bucket{namespace=\"$namespace\",release=~\"$track\"}[5m])))","legendFormat":"p99 {{release}}"}],"fieldConfig":{"defaults":{"unit":"s"}},"gridPos":{"h":8,"w":16,"x":0,"y":8}},
+        {"id":4,"type":"timeseries","title":"Active / rejected requests","datasource":{"type":"prometheus","uid":"prometheus"},"targets":[{"expr":"sum by (release)(pw2048_inference_active{namespace=\"$namespace\",release=~\"$track\"})","legendFormat":"active {{release}}"},{"expr":"sum by (release)(rate(pw2048_inference_rejected_total{namespace=\"$namespace\",release=~\"$track\"}[5m]))","legendFormat":"rejected/s {{release}}"}],"gridPos":{"h":8,"w":8,"x":16,"y":8}}
+      ]
+    }

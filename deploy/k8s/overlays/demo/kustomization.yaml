@@ -1,0 +1,9 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: pw2048-demo
+resources: [../../base]
+components: [../../components/namespace]
+nameSuffix: -demo
+images:
+  - {name: ghcr.io/alanthssss/pw2048, newTag: demo}
+patchesStrategicMerge: [environment.yaml]

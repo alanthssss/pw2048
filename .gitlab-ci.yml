@@ -1,0 +1,156 @@
+stages:
+  - lint
+  - test
+  - model-gate
+  - build
+  - scan
+  - deploy-test
+  - load-test
+  - canary
+  - production
+
+variables:
+  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+  IMAGE_TAG: "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHA"
+  DOCKER_TLS_CERTDIR: "/certs"
+  CAPACITY_PEAK_RPS: "100"
+  MPLBACKEND: "Agg"
+
+default:
+  interruptible: true
+  cache:
+    key: python
+    paths: [.cache/pip]
+
+lint:
+  stage: lint
+  image: python:3.12-slim
+  before_script: ["pip install ruff"]
+  script:
+    - ruff check src/api_server.py src/tracing.py src/model_registry.py src/quality_gate.py scripts/capacity_plan.py scripts/chaos_smoke.py scripts/model_register.py scripts/model_quality_gate.py tests/test_api_server.py tests/test_capacity_plan.py tests/test_model_registry.py tests/test_model_quality_gate.py
+
+unit-test:
+  stage: test
+  image: python:3.12-slim
+  before_script:
+    - pip install -r requirements.txt pytest
+    - python -m playwright install --with-deps chromium
+  script: ["pytest -q --junitxml=junit.xml"]
+  artifacts:
+    when: always
+    reports:
+      junit: junit.xml
+
+model-quality-gate:
+  stage: model-gate
+  image: python:3.12-slim
+  before_script: ["pip install -r requirements.txt"]
+  script:
+    - mkdir -p artifacts/model-gate
+    - python scripts/model_quality_gate.py --stable "$STABLE_METRICS_FILE" --candidate "$CANDIDATE_METRICS_FILE" --policy configs/quality-gate.json --output artifacts/model-gate/result.json
+  rules:
+    - if: '$STABLE_METRICS_FILE && $CANDIDATE_METRICS_FILE'
+    - when: never
+  artifacts:
+    when: always
+    paths: [artifacts/model-gate/]
+
+build-image:
+  stage: build
+  image: docker:27
+  services: ["docker:27-dind"]
+  needs:
+    - job: unit-test
+    - job: model-quality-gate
+      optional: true
+  before_script:
+    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
+  script:
+    - docker build --build-arg GIT_SHA="$CI_COMMIT_SHA" -t "$IMAGE_TAG" .
+    - docker push "$IMAGE_TAG"
+
+include:
+  - template: Jobs/Container-Scanning.gitlab-ci.yml
+
+container_scanning:
+  stage: scan
+  variables:
+    CS_IMAGE: "$IMAGE_TAG"
+  needs: ["build-image"]
+
+deploy-test:
+  stage: deploy-test
+  image:
+    name: bitnami/kubectl:1.31
+    entrypoint: [""]
+  needs: ["build-image", "container_scanning"]
+  environment:
+    name: test
+    url: "$TEST_BASE_URL"
+  script:
+    - kubectl config use-context "$KUBE_CONTEXT"
+    - kubectl -n "${TEST_NAMESPACE:-pw2048-test}" set image deployment/${TEST_DEPLOYMENT:-pw2048-stable-test} api="$IMAGE_TAG"
+    - kubectl -n "${TEST_NAMESPACE:-pw2048-test}" rollout status deployment/${TEST_DEPLOYMENT:-pw2048-stable-test} --timeout=180s
+  rules:
+    - if: '$TEST_BASE_URL && $KUBE_CONTEXT'
+
+load-test:
+  stage: load-test
+  image:
+    name: grafana/k6:0.54.0
+    entrypoint: [""]
+  needs: ["deploy-test"]
+  variables:
+    SUMMARY_PATH: loadtest-summary.json
+    TARGET_URL: "$TEST_BASE_URL"
+  script:
+    - k6 run loadtest/inference.js
+  artifacts:
+    when: always
+    paths: [loadtest-summary.json]
+  rules:
+    - if: '$TEST_BASE_URL && $KUBE_CONTEXT'
+
+capacity-plan:
+  stage: load-test
+  image: python:3.12-slim
+  needs:
+    - job: load-test
+      artifacts: true
+  script:
+    - python scripts/capacity_plan.py loadtest-summary.json --peak-rps "$CAPACITY_PEAK_RPS" --json-output capacity-plan.json --markdown-output capacity-plan.md
+  artifacts:
+    paths: [capacity-plan.json, capacity-plan.md]
+  rules:
+    - if: '$TEST_BASE_URL && $KUBE_CONTEXT'
+
+deploy-canary:
+  stage: canary
+  image:
+    name: bitnami/kubectl:1.31
+    entrypoint: [""]
+  needs: ["capacity-plan"]
+  environment: {name: production/canary}
+  script:
+    - kubectl config use-context "$KUBE_CONTEXT"
+    - ./scripts/canary.sh deploy "${CANARY_IMAGE:-$IMAGE_TAG}" "${MODEL_NAME:-heuristic}" "${MODEL_VERSION:-$CI_COMMIT_SHORT_SHA}"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $KUBE_CONTEXT'
+      when: manual
+      allow_failure: false
+
+promote-production:
+  stage: production
+  image:
+    name: bitnami/kubectl:1.31
+    entrypoint: [""]
+  needs: ["deploy-canary"]
+  environment: {name: production}
+  resource_group: production
+  script:
+    - kubectl config use-context "$KUBE_CONTEXT"
+    - ./scripts/canary.sh promote
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $KUBE_CONTEXT'
+      when: manual
+      allow_failure: false

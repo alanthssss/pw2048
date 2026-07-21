@@ -1,0 +1,6 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: {name: pw2048-stable}
+spec:
+  minAvailable: 1
+  selector: {matchLabels: {app: pw2048, track: stable}}

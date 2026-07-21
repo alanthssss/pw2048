@@ -1,0 +1,39 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: pw2048-slo
+  namespace: monitoring
+  labels: {release: kube-prometheus-stack}
+spec:
+  groups:
+    - name: pw2048.recording
+      interval: 30s
+      rules:
+        - record: pw2048:request_rate5m
+          expr: sum by (namespace, release) (rate(pw2048_inference_requests_total[5m]))
+        - record: pw2048:error_ratio5m
+          expr: sum by (namespace, release) (rate(pw2048_inference_errors_total[5m])) / clamp_min(sum by (namespace, release) (rate(pw2048_inference_requests_total[5m])), 0.001)
+        - record: pw2048:latency_p95_5m
+          expr: histogram_quantile(0.95, sum by (namespace, release, le) (rate(pw2048_inference_duration_seconds_bucket[5m])))
+    - name: pw2048.alerts
+      rules:
+        - alert: Pw2048HighErrorRate
+          expr: pw2048:error_ratio5m > 0.01
+          for: 10m
+          labels: {severity: critical, service: pw2048}
+          annotations: {summary: "pw2048 error budget is burning", description: "Error ratio for {{ $labels.release }} is above 1% for 10 minutes."}
+        - alert: Pw2048HighP95Latency
+          expr: pw2048:latency_p95_5m > 0.1
+          for: 10m
+          labels: {severity: warning, service: pw2048}
+          annotations: {summary: "pw2048 P95 latency is high", description: "P95 inference latency for {{ $labels.release }} exceeds 100 ms."}
+        - alert: Pw2048NoReadyReplicas
+          expr: kube_deployment_status_replicas_available{deployment=~"pw2048-(stable|canary).*"} < 1
+          for: 5m
+          labels: {severity: critical, service: pw2048}
+          annotations: {summary: "pw2048 has no ready replica", description: "Deployment {{ $labels.deployment }} in {{ $labels.namespace }} has no available replicas."}
+        - alert: Pw2048CanaryRegression
+          expr: pw2048:error_ratio5m{release="canary"} > (pw2048:error_ratio5m{release="stable"} + 0.01)
+          for: 5m
+          labels: {severity: critical, service: pw2048, action: rollback}
+          annotations: {summary: "pw2048 canary regressed", description: "Canary error ratio is more than one percentage point above stable."}

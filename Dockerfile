@@ -7,6 +7,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     GIT_SHA=${GIT_SHA}
 
 WORKDIR /app
+COPY requirements-api.txt .
+RUN pip install --no-cache-dir -r requirements-api.txt
 COPY src ./src
 
 RUN useradd --create-home --uid 10001 appuser

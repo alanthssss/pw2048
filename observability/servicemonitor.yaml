@@ -1,0 +1,12 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: pw2048
+  namespace: monitoring
+  labels: {release: kube-prometheus-stack}
+spec:
+  namespaceSelector:
+    matchNames: [pw2048-dev, pw2048-test, pw2048-demo, pw2048-prod]
+  selector: {matchLabels: {app: pw2048}}
+  endpoints:
+    - {port: http, path: /metrics, interval: 15s, scrapeTimeout: 5s}
