@@ -6,7 +6,7 @@ import random
 from typing import List
 
 from .base import BaseAlgorithm
-from src.game import DIRECTIONS
+from src.constants import DIRECTIONS
 
 
 class RandomAlgorithm(BaseAlgorithm):

@@ -189,6 +189,15 @@ python main.py --inspect-checkpoint checkpoints/DQN-v3/best_checkpoint.npz
 python main.py --training-status    tb_logs/DQN-v3
 ```
 
+## Production-shaped canary deployment
+
+The repository includes a versioned inference API and a complete Kubernetes
+canary workflow: stable/canary Deployments, weighted NGINX routing, sticky test
+sessions, health probes, Prometheus metrics, progressive traffic steps,
+automatic metric gates, promotion, and rollback.
+
+See **[Canary Deployment Guide](docs/canary-deployment.md)**.
+
 ## 4-layer RL Training Pipeline
 
 The system exposes a structured Env / Train / Eval / Play stack for sustained

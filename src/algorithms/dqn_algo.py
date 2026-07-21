@@ -12,7 +12,7 @@ import numpy as np
 
 from .base import BaseAlgorithm
 from .greedy_algo import simulate_move, _boards_equal
-from src.game import DIRECTIONS
+from src.constants import DIRECTIONS
 
 # ---------------------------------------------------------------------------
 # Optional PyTorch backend (GPU / MPS / CUDA acceleration)
@@ -1345,4 +1345,3 @@ class DQNAlgorithmV3(BaseAlgorithm):
         self._epsilon = min(self._epsilon, 0.3)
         # Keep target net in sync with the pre-trained weights.
         self._target_net.copy_weights(self._q_net)
-

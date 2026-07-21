@@ -7,7 +7,7 @@ from typing import List
 
 from .base import BaseAlgorithm
 from .greedy_algo import simulate_move, _boards_equal
-from src.game import DIRECTIONS
+from src.constants import DIRECTIONS
 
 
 def _empty_tiles_score(board: List[List[int]]) -> float:
