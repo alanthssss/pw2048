@@ -1,0 +1,10 @@
+{
+  "model_version": "candidate-v2",
+  "metrics": {
+    "mean_score": 1040,
+    "p90_score": 1875,
+    "win_rate": 0.72,
+    "invalid_action_rate": 0.0,
+    "evaluation_games": 500
+  }
+}

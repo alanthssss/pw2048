@@ -1,0 +1,22 @@
+{
+  "status": "approved",
+  "observed": {
+    "requests": 6000,
+    "throughput_rps": 100.0,
+    "p95_ms": 82.0,
+    "p99_ms": 140.0,
+    "error_rate": 0.002
+  },
+  "slo": {
+    "max_p95_ms": 250.0,
+    "max_error_rate": 0.01
+  },
+  "capacity": {
+    "peak_rps": 250.0,
+    "safety_factor": 0.7,
+    "safe_rps_per_replica": 70.0,
+    "workload_replicas": 4,
+    "n_plus": 1,
+    "recommended_replicas": 5
+  }
+}

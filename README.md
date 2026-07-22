@@ -12,6 +12,49 @@ It is designed as a small engineering system for:
 - training / benchmark workflow design
 - multi-interface developer experience (CLI / TUI / Web)
 
+## Five-minute tour
+
+If you only have five minutes, read the project in this order:
+
+1. **Problem** — AI experiments are easy to run once, but difficult to compare,
+   reproduce, release and operate safely.
+2. **Approach** — pw2048 uses a small deterministic domain to connect
+   `Env → Train → Eval → Registry → Quality Gate → Deploy → Observe → Rollback`.
+3. **Evidence** — models carry immutable manifests; candidates must pass offline
+   quality checks; services pass load and canary gates before promotion.
+4. **Operations** — Stable/Canary workloads expose metrics and traces, run in
+   isolated Kubernetes environments, and support automated rollback.
+5. **Boundary** — this is an engineering reference implementation, not a claim
+   that reinforcement learning beats Expectimax or that a demo equals a large
+   production cluster.
+
+The shortest guided path is:
+
+- [System Architecture](docs/architecture.md)
+- [Model Release Demo](docs/demo-model-release.md)
+- [Canary Failure and Rollback Demo](docs/demo-canary-rollback.md)
+- [Capacity Report Example](docs/examples/capacity-plan.md)
+- [Rejected Model Example](docs/demo-quality-regression.md)
+- [Design Trade-offs](docs/design-tradeoffs.md)
+- [3-minute and 10-minute Project Introductions](docs/interview-presentation.md)
+
+### End-to-end lifecycle
+
+```mermaid
+flowchart LR
+    A["Versioned code and training config"] --> B["Train"]
+    B --> C["Evaluate on frozen policy and seeds"]
+    C --> D["Register immutable artifact and manifest"]
+    D --> E{"Offline quality gate"}
+    E -- Fail --> F["Block release"]
+    E -- Pass --> G["Build and scan image"]
+    G --> H["Test deploy and load test"]
+    H --> I["5% → 20% → 50% canary"]
+    I --> J{"Online SLO gate"}
+    J -- Fail --> K["Automatic rollback"]
+    J -- Pass --> L["Manual approval and promotion"]
+```
+
 ## Screenshots
 
 | 2048 Game | Web Launcher |

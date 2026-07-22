@@ -1,0 +1,10 @@
+{
+  "model_version": "candidate-bad-v2",
+  "metrics": {
+    "mean_score": 900,
+    "p90_score": 1600,
+    "win_rate": 0.65,
+    "invalid_action_rate": 0.02,
+    "evaluation_games": 500
+  }
+}
