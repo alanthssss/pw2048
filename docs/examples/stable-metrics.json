@@ -1,0 +1,10 @@
+{
+  "model_version": "stable-v1",
+  "metrics": {
+    "mean_score": 1000,
+    "p90_score": 1800,
+    "win_rate": 0.70,
+    "invalid_action_rate": 0.0,
+    "evaluation_games": 500
+  }
+}
